@@ -1390,6 +1390,69 @@ pub fn equal(comptime T: type, a: []const T, b: []const T) bool {
     return true;
 }
 
+// Sorting and construction.
+
+/// Sorts a slice in-place by a key extracted via `key_fn`.
+///
+/// `K` must be an integer or float type comparable via `std.math.order`.
+/// The sort is stable: elements with equal keys keep their original order.
+///
+/// ```zig
+/// var items = [_]i32{ 30, 10, 20 };
+/// lo.sortBy(i32, i32, &items, struct {
+///     fn f(x: i32) i32 { return x; }
+/// }.f);
+/// // items == { 10, 20, 30 }
+/// ```
+pub fn sortBy(comptime T: type, comptime K: type, items: []T, key_fn: *const fn (T) K) void {
+    _ = .{ T, K, items, key_fn };
+}
+
+/// Returns a sorted copy of the slice without mutating the original.
+///
+/// Caller owns the returned slice and must free it with `allocator.free`.
+///
+/// ```zig
+/// const sorted = try lo.sortByAlloc(i32, i32, allocator, &.{ 30, 10, 20 }, struct {
+///     fn f(x: i32) i32 { return x; }
+/// }.f);
+/// defer allocator.free(sorted);
+/// // sorted == { 10, 20, 30 }
+/// ```
+pub fn sortByAlloc(comptime T: type, comptime K: type, allocator: Allocator, items: []const T, key_fn: *const fn (T) K) Allocator.Error![]T {
+    _ = .{ T, K, allocator, items, key_fn };
+    return error.OutOfMemory;
+}
+
+/// Concatenates multiple slices into a single allocated slice.
+///
+/// Caller owns the returned slice and must free it with `allocator.free`.
+///
+/// ```zig
+/// const result = try lo.concat(i32, allocator, &.{ &.{ 1, 2 }, &.{ 3, 4 }, &.{5} });
+/// defer allocator.free(result);
+/// // result == { 1, 2, 3, 4, 5 }
+/// ```
+pub fn concat(comptime T: type, allocator: Allocator, slices: []const []const T) Allocator.Error![]T {
+    _ = .{ T, allocator, slices };
+    return error.OutOfMemory;
+}
+
+/// Inserts `new_elements` into `items` at `index`, returning a new allocated slice.
+///
+/// If `index` exceeds `items.len`, it is clamped to `items.len` (appends).
+/// Caller owns the returned slice and must free it with `allocator.free`.
+///
+/// ```zig
+/// const result = try lo.splice(i32, allocator, &.{ 1, 2, 5, 6 }, 2, &.{ 3, 4 });
+/// defer allocator.free(result);
+/// // result == { 1, 2, 3, 4, 5, 6 }
+/// ```
+pub fn splice(comptime T: type, allocator: Allocator, items: []const T, index: usize, new_elements: []const T) Allocator.Error![]T {
+    _ = .{ T, allocator, items, index, new_elements };
+    return error.OutOfMemory;
+}
+
 // Equality helper, used throughout slice.zig.
 
 fn eql(comptime T: type, a: T, b: T) bool {
@@ -2946,4 +3009,196 @@ test "equal: different lengths" {
 
 test "equal: both empty" {
     try std.testing.expect(equal(i32, &.{}, &.{}));
+}
+
+// Tests: sortBy.
+
+test "sortBy: sorts by identity key ascending" {
+    var items = [_]i32{ 30, 10, 20 };
+    sortBy(i32, i32, &items, struct {
+        fn f(x: i32) i32 {
+            return x;
+        }
+    }.f);
+    try std.testing.expectEqualSlices(i32, &.{ 10, 20, 30 }, &items);
+}
+
+test "sortBy: already-sorted input unchanged" {
+    var items = [_]i32{ 1, 2, 3 };
+    sortBy(i32, i32, &items, struct {
+        fn f(x: i32) i32 {
+            return x;
+        }
+    }.f);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, &items);
+}
+
+test "sortBy: single element is no-op" {
+    var items = [_]i32{42};
+    sortBy(i32, i32, &items, struct {
+        fn f(x: i32) i32 {
+            return x;
+        }
+    }.f);
+    try std.testing.expectEqualSlices(i32, &.{42}, &items);
+}
+
+test "sortBy: empty slice is no-op" {
+    var items = [_]i32{};
+    sortBy(i32, i32, &items, struct {
+        fn f(x: i32) i32 {
+            return x;
+        }
+    }.f);
+    try std.testing.expectEqualSlices(i32, &.{}, &items);
+}
+
+test "sortBy: stable sort preserves relative order of equal keys" {
+    const Person = struct {
+        name: []const u8,
+        age: u32,
+        fn getAge(p: @This()) u32 {
+            return p.age;
+        }
+    };
+    var people = [_]Person{
+        .{ .name = "Alice", .age = 30 },
+        .{ .name = "Bob", .age = 25 },
+        .{ .name = "Charlie", .age = 30 },
+        .{ .name = "Dave", .age = 25 },
+    };
+    sortBy(Person, u32, &people, Person.getAge);
+    // Equal ages must preserve relative order: Bob before Dave (both 25), Alice before Charlie (both 30).
+    try std.testing.expectEqualStrings("Bob", people[0].name);
+    try std.testing.expectEqualStrings("Dave", people[1].name);
+    try std.testing.expectEqualStrings("Alice", people[2].name);
+    try std.testing.expectEqualStrings("Charlie", people[3].name);
+}
+
+test "sortBy: sorts structs by extracted numeric field" {
+    const Person = struct {
+        name: []const u8,
+        age: u32,
+        fn getAge(p: @This()) u32 {
+            return p.age;
+        }
+    };
+    var people = [_]Person{
+        .{ .name = "Charlie", .age = 35 },
+        .{ .name = "Alice", .age = 25 },
+        .{ .name = "Bob", .age = 30 },
+    };
+    sortBy(Person, u32, &people, Person.getAge);
+    try std.testing.expectEqualStrings("Alice", people[0].name);
+    try std.testing.expectEqualStrings("Bob", people[1].name);
+    try std.testing.expectEqualStrings("Charlie", people[2].name);
+}
+
+// Tests: sortByAlloc.
+
+test "sortByAlloc: returns sorted copy without mutating original" {
+    const allocator = std.testing.allocator;
+    const original = [_]i32{ 30, 10, 20 };
+    const sorted = try sortByAlloc(i32, i32, allocator, &original, struct {
+        fn f(x: i32) i32 {
+            return x;
+        }
+    }.f);
+    defer allocator.free(sorted);
+    try std.testing.expectEqualSlices(i32, &.{ 10, 20, 30 }, sorted);
+    // Original not mutated.
+    try std.testing.expectEqualSlices(i32, &.{ 30, 10, 20 }, &original);
+}
+
+test "sortByAlloc: empty input returns empty allocated slice" {
+    const allocator = std.testing.allocator;
+    const sorted = try sortByAlloc(i32, i32, allocator, &.{}, struct {
+        fn f(x: i32) i32 {
+            return x;
+        }
+    }.f);
+    defer allocator.free(sorted);
+    try std.testing.expectEqual(@as(usize, 0), sorted.len);
+}
+
+// Tests: concat.
+
+test "concat: concatenates multiple slices" {
+    const allocator = std.testing.allocator;
+    const result = try concat(i32, allocator, &.{ @as([]const i32, &.{ 1, 2 }), @as([]const i32, &.{ 3, 4 }), @as([]const i32, &.{5}) });
+    defer allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3, 4, 5 }, result);
+}
+
+test "concat: single slice returns copy" {
+    const allocator = std.testing.allocator;
+    const result = try concat(i32, allocator, &.{@as([]const i32, &.{ 1, 2, 3 })});
+    defer allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, result);
+}
+
+test "concat: empty slices in input skipped" {
+    const allocator = std.testing.allocator;
+    const result = try concat(i32, allocator, &.{ @as([]const i32, &.{ 1, 2 }), @as([]const i32, &.{}), @as([]const i32, &.{ 3, 4 }) });
+    defer allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3, 4 }, result);
+}
+
+test "concat: all-empty input returns empty slice" {
+    const allocator = std.testing.allocator;
+    const result = try concat(i32, allocator, &.{ @as([]const i32, &.{}), @as([]const i32, &.{}) });
+    defer allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+test "concat: empty outer slice returns empty slice" {
+    const allocator = std.testing.allocator;
+    const empty_slices: []const []const i32 = &.{};
+    const result = try concat(i32, allocator, empty_slices);
+    defer allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+// Tests: splice.
+
+test "splice: insert at middle" {
+    const allocator = std.testing.allocator;
+    const result = try splice(i32, allocator, &.{ 1, 2, 5, 6 }, 2, &.{ 3, 4 });
+    defer allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3, 4, 5, 6 }, result);
+}
+
+test "splice: insert at beginning" {
+    const allocator = std.testing.allocator;
+    const result = try splice(i32, allocator, &.{ 3, 4, 5 }, 0, &.{ 1, 2 });
+    defer allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3, 4, 5 }, result);
+}
+
+test "splice: insert at end" {
+    const allocator = std.testing.allocator;
+    const result = try splice(i32, allocator, &.{ 1, 2, 3 }, 3, &.{ 4, 5 });
+    defer allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3, 4, 5 }, result);
+}
+
+test "splice: index beyond length clamps to end" {
+    const allocator = std.testing.allocator;
+    const result = try splice(i32, allocator, &.{ 1, 2, 3 }, 100, &.{ 4, 5 });
+    defer allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3, 4, 5 }, result);
+}
+
+test "splice: empty new_elements returns copy of original" {
+    const allocator = std.testing.allocator;
+    const result = try splice(i32, allocator, &.{ 1, 2, 3 }, 1, &.{});
+    defer allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, result);
+}
+
+test "splice: empty source with elements returns copy of new_elements" {
+    const allocator = std.testing.allocator;
+    const result = try splice(i32, allocator, &.{}, 0, &.{ 1, 2, 3 });
+    defer allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, result);
 }
