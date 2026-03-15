@@ -935,3 +935,128 @@ test "stddev: is sqrt of variance" {
     const s = stddev(i32, &data).?;
     try std.testing.expectApproxEqAbs(@sqrt(v), s, 1e-10);
 }
+
+// inRange tests
+
+test "inRange: value within range returns true" {
+    try std.testing.expectEqual(true, inRange(i32, 3, 1, 5));
+}
+
+test "inRange: value at start (inclusive) returns true" {
+    try std.testing.expectEqual(true, inRange(i32, 1, 1, 5));
+}
+
+test "inRange: value at end (exclusive) returns false" {
+    try std.testing.expectEqual(false, inRange(i32, 5, 1, 5));
+}
+
+test "inRange: value below range returns false" {
+    try std.testing.expectEqual(false, inRange(i32, 0, 1, 5));
+}
+
+test "inRange: value above range returns false" {
+    try std.testing.expectEqual(false, inRange(i32, 10, 1, 5));
+}
+
+test "inRange: negative ranges work correctly" {
+    try std.testing.expectEqual(true, inRange(i32, -3, -5, -1));
+    try std.testing.expectEqual(false, inRange(i32, -1, -5, -1));
+}
+
+test "inRange: floats work correctly" {
+    try std.testing.expectEqual(true, inRange(f64, 0.5, 0.0, 1.0));
+    try std.testing.expectEqual(false, inRange(f64, 1.0, 0.0, 1.0));
+}
+
+test "inRange: start >= end returns false (empty range)" {
+    try std.testing.expectEqual(false, inRange(i32, 3, 5, 1));
+    try std.testing.expectEqual(false, inRange(i32, 3, 3, 3));
+}
+
+// lerp tests
+
+test "lerp: t=0 returns a, t=1 returns b, t=0.5 returns midpoint" {
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), lerp(f64, 0.0, 10.0, 0.0), 1e-10);
+    try std.testing.expectApproxEqAbs(@as(f64, 10.0), lerp(f64, 0.0, 10.0, 1.0), 1e-10);
+    try std.testing.expectApproxEqAbs(@as(f64, 5.0), lerp(f64, 0.0, 10.0, 0.5), 1e-10);
+}
+
+test "lerp: works with f32" {
+    const result = lerp(f32, 0.0, 10.0, 0.5);
+    try std.testing.expectApproxEqAbs(@as(f32, 5.0), result, 1e-5);
+}
+
+// remap tests
+
+test "remap: maps value from one range to another" {
+    // 5 in [0,10] -> 50 in [0,100]
+    try std.testing.expectApproxEqAbs(@as(f64, 50.0), remap(f64, 5.0, 0.0, 10.0, 0.0, 100.0), 1e-10);
+}
+
+test "remap: works with f32" {
+    const result = remap(f32, 5.0, 0.0, 10.0, 0.0, 100.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 50.0), result, 1e-5);
+}
+
+test "remap: inverted output range works" {
+    // 5 in [0,10] -> 50 in [100,0] = 50
+    try std.testing.expectApproxEqAbs(@as(f64, 50.0), remap(f64, 5.0, 0.0, 10.0, 100.0, 0.0), 1e-10);
+}
+
+// cumSum tests
+
+test "cumSum: empty slice returns empty slice" {
+    const result = try cumSum(i32, std.testing.allocator, &.{});
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+test "cumSum: {1,2,3,4} returns {1,3,6,10}" {
+    const result = try cumSum(i32, std.testing.allocator, &.{ 1, 2, 3, 4 });
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 3, 6, 10 }, result);
+}
+
+test "cumSum: single element returns {element}" {
+    const result = try cumSum(i32, std.testing.allocator, &.{42});
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{42}, result);
+}
+
+test "cumSum: with negatives works correctly" {
+    const result = try cumSum(i32, std.testing.allocator, &.{ 1, -2, 3, -4 });
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, -1, 2, -2 }, result);
+}
+
+test "cumSum: with zeros works correctly" {
+    const result = try cumSum(i32, std.testing.allocator, &.{ 0, 1, 0, 2 });
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 0, 1, 1, 3 }, result);
+}
+
+// cumProd tests
+
+test "cumProd: empty slice returns empty slice" {
+    const result = try cumProd(i32, std.testing.allocator, &.{});
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+test "cumProd: {1,2,3,4} returns {1,2,6,24}" {
+    const result = try cumProd(i32, std.testing.allocator, &.{ 1, 2, 3, 4 });
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 6, 24 }, result);
+}
+
+test "cumProd: single element returns {element}" {
+    const result = try cumProd(i32, std.testing.allocator, &.{7});
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{7}, result);
+}
+
+test "cumProd: with zero produces zeros after the zero" {
+    const result = try cumProd(i32, std.testing.allocator, &.{ 1, 2, 0, 4 });
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 0, 0 }, result);
+}
