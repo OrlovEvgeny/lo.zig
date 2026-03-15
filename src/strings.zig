@@ -449,6 +449,112 @@ pub fn substr(input: []const u8, start: usize, end: usize) []const u8 {
     return input[s..e];
 }
 
+/// Split a string by a delimiter sequence, returning a lazy iterator.
+/// Preserves empty tokens (e.g., "a,,b" yields "a", "", "b").
+/// Returned slices borrow from the input string -- they are NOT copies.
+///
+/// ```zig
+/// var it = lo.split("one,two,,four", ",");
+/// it.next(); // "one"
+/// it.next(); // "two"
+/// it.next(); // ""
+/// it.next(); // "four"
+/// ```
+pub fn split(input: []const u8, delimiter: []const u8) std.mem.SplitIterator(u8, .sequence) {
+    return std.mem.splitSequence(u8, input, delimiter);
+}
+
+/// Split a string by a delimiter, collected into an allocated slice.
+/// Caller owns the returned outer slice (free with `allocator.free(result)`).
+/// Inner slices borrow from `input` -- do not use after `input` is freed.
+///
+/// ```zig
+/// const parts = try lo.splitAlloc(alloc, "a-b-c", "-");
+/// defer alloc.free(parts);
+/// // parts[0] == "a", parts[1] == "b", parts[2] == "c"
+/// ```
+pub fn splitAlloc(
+    allocator: Allocator,
+    input: []const u8,
+    delimiter: []const u8,
+) Allocator.Error![][]const u8 {
+    var it = std.mem.splitSequence(u8, input, delimiter);
+    var list = std.ArrayList([]const u8){};
+    errdefer list.deinit(allocator);
+    while (it.next()) |part| {
+        try list.append(allocator, part);
+    }
+    return list.toOwnedSlice(allocator);
+}
+
+/// Join a slice of strings with a separator into a single owned string.
+/// Result is always caller-owned (freeable with `allocator.free`),
+/// including for empty input.
+///
+/// ```zig
+/// const s = try lo.join(alloc, ", ", &.{"hello", "world"});
+/// defer alloc.free(s);
+/// // s == "hello, world"
+/// ```
+pub fn join(
+    allocator: Allocator,
+    separator: []const u8,
+    strings_slice: []const []const u8,
+) Allocator.Error![]u8 {
+    if (strings_slice.len == 0) {
+        return allocator.dupe(u8, "");
+    }
+    return std.mem.join(allocator, separator, strings_slice);
+}
+
+/// Replace the first occurrence of `needle` in `input` with `replacement`.
+/// Returns an owned copy. If needle is empty or not found, returns a copy of input.
+///
+/// ```zig
+/// const s = try lo.replace(alloc, "hello hello", "hello", "hi");
+/// defer alloc.free(s);
+/// // s == "hi hello"
+/// ```
+pub fn replace(
+    allocator: Allocator,
+    input: []const u8,
+    needle: []const u8,
+    replacement: []const u8,
+) Allocator.Error![]u8 {
+    if (needle.len == 0) {
+        return allocator.dupe(u8, input);
+    }
+    const pos = std.mem.indexOf(u8, input, needle) orelse {
+        return allocator.dupe(u8, input);
+    };
+    const new_len = input.len - needle.len + replacement.len;
+    const result = try allocator.alloc(u8, new_len);
+    @memcpy(result[0..pos], input[0..pos]);
+    @memcpy(result[pos..][0..replacement.len], replacement);
+    @memcpy(result[pos + replacement.len ..], input[pos + needle.len ..]);
+    return result;
+}
+
+/// Replace all occurrences of `needle` in `input` with `replacement`.
+/// Returns an owned copy. If needle is empty or not found, returns a copy of input.
+///
+/// ```zig
+/// const s = try lo.replaceAll(alloc, "hello hello", "hello", "hi");
+/// defer alloc.free(s);
+/// // s == "hi hi"
+/// ```
+pub fn replaceAll(
+    allocator: Allocator,
+    input: []const u8,
+    needle: []const u8,
+    replacement: []const u8,
+) Allocator.Error![]u8 {
+    if (needle.len == 0) {
+        return allocator.dupe(u8, input);
+    }
+    return std.mem.replaceOwned(u8, allocator, input, needle, replacement);
+}
+
 // Tests.
 
 test "words: camelCase" {
