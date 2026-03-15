@@ -712,3 +712,90 @@ test "mode: tie-breaking with partial tie" {
     const m = try mode(i32, std.testing.allocator, &.{ 5, 5, 3, 3, 1 });
     try std.testing.expectEqual(@as(?i32, 3), m);
 }
+
+test "median: empty slice returns null" {
+    const result = try median(i32, std.testing.allocator, &.{});
+    try std.testing.expectEqual(@as(?f64, null), result);
+}
+
+test "median: single element" {
+    const result = try median(i32, std.testing.allocator, &.{5});
+    try std.testing.expectEqual(@as(?f64, 5.0), result);
+}
+
+test "median: odd-count slice" {
+    const result = (try median(i32, std.testing.allocator, &.{ 1, 3, 2 })).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), result, 1e-10);
+}
+
+test "median: even-count slice" {
+    const result = (try median(i32, std.testing.allocator, &.{ 1, 2, 3, 4 })).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 2.5), result, 1e-10);
+}
+
+test "median: floats" {
+    const result = (try median(f64, std.testing.allocator, &.{ 1.5, 2.5, 3.5 })).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 2.5), result, 1e-10);
+}
+
+test "median: negative values" {
+    const result = (try median(i32, std.testing.allocator, &.{ -5, -1, -3 })).?;
+    try std.testing.expectApproxEqAbs(@as(f64, -3.0), result, 1e-10);
+}
+
+test "median: does not mutate input slice" {
+    var data = [_]i32{ 3, 1, 2 };
+    _ = try median(i32, std.testing.allocator, &data);
+    try std.testing.expectEqualSlices(i32, &.{ 3, 1, 2 }, &data);
+}
+
+test "percentile: empty slice returns null" {
+    const result = try percentile(i32, std.testing.allocator, &.{}, 50.0);
+    try std.testing.expectEqual(@as(?f64, null), result);
+}
+
+test "percentile: p=0 returns minimum" {
+    const result = (try percentile(i32, std.testing.allocator, &.{ 3, 1, 5, 2, 4 }, 0.0)).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), result, 1e-10);
+}
+
+test "percentile: p=100 returns maximum" {
+    const result = (try percentile(i32, std.testing.allocator, &.{ 3, 1, 5, 2, 4 }, 100.0)).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 5.0), result, 1e-10);
+}
+
+test "percentile: p=50 on odd-count slice" {
+    const result = (try percentile(i32, std.testing.allocator, &.{ 1, 2, 3, 4, 5 }, 50.0)).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0), result, 1e-10);
+}
+
+test "percentile: p=25 on odd-count slice" {
+    const result = (try percentile(i32, std.testing.allocator, &.{ 1, 2, 3, 4, 5 }, 25.0)).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), result, 1e-10);
+}
+
+test "percentile: p=75 on odd-count slice" {
+    const result = (try percentile(i32, std.testing.allocator, &.{ 1, 2, 3, 4, 5 }, 75.0)).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 4.0), result, 1e-10);
+}
+
+test "percentile: single element returns that element for any valid p" {
+    const result = (try percentile(i32, std.testing.allocator, &.{42}, 50.0)).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 42.0), result, 1e-10);
+}
+
+test "percentile: p less than 0 returns null" {
+    const result = try percentile(i32, std.testing.allocator, &.{ 1, 2, 3 }, -1.0);
+    try std.testing.expectEqual(@as(?f64, null), result);
+}
+
+test "percentile: p greater than 100 returns null" {
+    const result = try percentile(i32, std.testing.allocator, &.{ 1, 2, 3 }, 101.0);
+    try std.testing.expectEqual(@as(?f64, null), result);
+}
+
+test "percentile: even-count slice uses linear interpolation" {
+    // {1, 2, 3, 4}: p=50 -> rank = 0.5 * 3 = 1.5 -> lerp(2,3,0.5) = 2.5
+    const result = (try percentile(i32, std.testing.allocator, &.{ 1, 2, 3, 4 }, 50.0)).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 2.5), result, 1e-10);
+}
