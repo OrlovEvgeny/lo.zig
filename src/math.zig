@@ -855,3 +855,53 @@ test "percentile: even-count slice uses linear interpolation" {
     const result = (try percentile(i32, std.testing.allocator, &.{ 1, 2, 3, 4 }, 50.0)).?;
     try std.testing.expectApproxEqAbs(@as(f64, 2.5), result, 1e-10);
 }
+
+test "variance: empty slice returns null" {
+    const result = variance(i32, &.{});
+    try std.testing.expectEqual(@as(?f64, null), result);
+}
+
+test "variance: single element returns 0.0" {
+    const result = variance(i32, &.{5}).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), result, 1e-10);
+}
+
+test "variance: known value population variance" {
+    // {2,4,4,4,5,5,7,9}: mean=5, sum_sq_diff=32, var=32/8=4.0
+    const result = variance(i32, &.{ 2, 4, 4, 4, 5, 5, 7, 9 }).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 4.0), result, 1e-10);
+}
+
+test "variance: floats" {
+    // {1.0, 2.0, 3.0, 4.0, 5.0}: mean=3.0, sum_sq_diff=10, var=10/5=2.0
+    const result = variance(f64, &.{ 1.0, 2.0, 3.0, 4.0, 5.0 }).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), result, 1e-10);
+}
+
+test "variance: all same values returns 0.0" {
+    const result = variance(i32, &.{ 7, 7, 7, 7 }).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), result, 1e-10);
+}
+
+test "stddev: empty slice returns null" {
+    const result = stddev(i32, &.{});
+    try std.testing.expectEqual(@as(?f64, null), result);
+}
+
+test "stddev: single element returns 0.0" {
+    const result = stddev(i32, &.{5}).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), result, 1e-10);
+}
+
+test "stddev: known value" {
+    // variance({2,4,4,4,5,5,7,9}) = 4.0, stddev = sqrt(4.0) = 2.0
+    const result = stddev(i32, &.{ 2, 4, 4, 4, 5, 5, 7, 9 }).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), result, 1e-10);
+}
+
+test "stddev: is sqrt of variance" {
+    const data = [_]i32{ 1, 3, 5, 7, 9 };
+    const v = variance(i32, &data).?;
+    const s = stddev(i32, &data).?;
+    try std.testing.expectApproxEqAbs(@sqrt(v), s, 1e-10);
+}
