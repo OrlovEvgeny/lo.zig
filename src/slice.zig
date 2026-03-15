@@ -30,7 +30,7 @@ pub fn last(comptime T: type, slice: []const T) ?T {
 /// lo.nth(i32, &.{ 10, 20, 30 }, -1); // 30
 /// ```
 pub fn nth(comptime T: type, slice: []const T, index: isize) ?T {
-    const len: isize = @intCast(slice.len);
+    const len = std.math.cast(isize, slice.len) orelse return null;
     var i = index;
     if (i < 0) i += len;
     if (i < 0 or i >= len) return null;
@@ -123,6 +123,9 @@ pub fn samples(
     n: usize,
     random: std.Random,
 ) Allocator.Error![]T {
+    if (slice.len == 0) {
+        return allocator.alloc(T, 0);
+    }
     const result = try allocator.alloc(T, n);
     for (result) |*slot| {
         slot.* = slice[random.intRangeLessThan(usize, 0, slice.len)];
