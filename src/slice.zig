@@ -1405,7 +1405,15 @@ pub fn equal(comptime T: type, a: []const T, b: []const T) bool {
 /// // items == { 10, 20, 30 }
 /// ```
 pub fn sortBy(comptime T: type, comptime K: type, items: []T, key_fn: *const fn (T) K) void {
-    _ = .{ T, K, items, key_fn };
+    const Context = struct {
+        key: *const fn (T) K,
+    };
+    const ctx = Context{ .key = key_fn };
+    std.sort.block(T, items, ctx, struct {
+        fn lessThan(c: Context, a: T, b: T) bool {
+            return std.math.order(c.key(a), c.key(b)) == .lt;
+        }
+    }.lessThan);
 }
 
 /// Returns a sorted copy of the slice without mutating the original.
@@ -1420,8 +1428,10 @@ pub fn sortBy(comptime T: type, comptime K: type, items: []T, key_fn: *const fn 
 /// // sorted == { 10, 20, 30 }
 /// ```
 pub fn sortByAlloc(comptime T: type, comptime K: type, allocator: Allocator, items: []const T, key_fn: *const fn (T) K) Allocator.Error![]T {
-    _ = .{ T, K, allocator, items, key_fn };
-    return error.OutOfMemory;
+    const copy = try allocator.dupe(T, items);
+    errdefer allocator.free(copy);
+    sortBy(T, K, copy, key_fn);
+    return copy;
 }
 
 /// Concatenates multiple slices into a single allocated slice.
@@ -1434,8 +1444,17 @@ pub fn sortByAlloc(comptime T: type, comptime K: type, allocator: Allocator, ite
 /// // result == { 1, 2, 3, 4, 5 }
 /// ```
 pub fn concat(comptime T: type, allocator: Allocator, slices: []const []const T) Allocator.Error![]T {
-    _ = .{ T, allocator, slices };
-    return error.OutOfMemory;
+    var total_len: usize = 0;
+    for (slices) |s| {
+        total_len += s.len;
+    }
+    const result = try allocator.alloc(T, total_len);
+    var offset: usize = 0;
+    for (slices) |s| {
+        @memcpy(result[offset..][0..s.len], s);
+        offset += s.len;
+    }
+    return result;
 }
 
 /// Inserts `new_elements` into `items` at `index`, returning a new allocated slice.
@@ -1449,8 +1468,12 @@ pub fn concat(comptime T: type, allocator: Allocator, slices: []const []const T)
 /// // result == { 1, 2, 3, 4, 5, 6 }
 /// ```
 pub fn splice(comptime T: type, allocator: Allocator, items: []const T, index: usize, new_elements: []const T) Allocator.Error![]T {
-    _ = .{ T, allocator, items, index, new_elements };
-    return error.OutOfMemory;
+    const idx = @min(index, items.len);
+    const result = try allocator.alloc(T, items.len + new_elements.len);
+    @memcpy(result[0..idx], items[0..idx]);
+    @memcpy(result[idx..][0..new_elements.len], new_elements);
+    @memcpy(result[idx + new_elements.len ..][0..items.len - idx], items[idx..]);
+    return result;
 }
 
 // Equality helper, used throughout slice.zig.
