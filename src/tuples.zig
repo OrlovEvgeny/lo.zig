@@ -1,13 +1,17 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-/// A generic pair for zip operations.
+/// A generic pair type used by zip operations.
+///
+/// ```zig
+/// const p = lo.Pair(i32, u8){ .a = 42, .b = 'z' };
+/// ```
 pub fn Pair(comptime A: type, comptime B: type) type {
     return struct { a: A, b: B };
 }
 
 /// Lazy iterator that pairs elements from two slices.
-/// Stops at the shorter slice.
+/// Returned by `zip()`. See `zip()` for usage examples.
 pub fn ZipIterator(comptime A: type, comptime B: type) type {
     return struct {
         as: []const A,
@@ -58,6 +62,12 @@ pub fn zip(
 }
 
 /// Pair elements from two slices into an allocated slice.
+/// Caller owns the returned slice.
+///
+/// ```zig
+/// const pairs = try lo.zipAlloc(i32, u8, allocator, &.{1, 2}, &.{'a', 'b'});
+/// defer allocator.free(pairs);
+/// ```
 pub fn zipAlloc(
     comptime A: type,
     comptime B: type,
@@ -69,7 +79,8 @@ pub fn zipAlloc(
     return it.collect(allocator);
 }
 
-/// Unzip result holding two allocated slices.
+/// Result type holding two allocated slices.
+/// Returned by `unzip()`. Call `deinit(allocator)` to free both slices.
 pub fn UnzipResult(comptime A: type, comptime B: type) type {
     return struct {
         a: []A,
@@ -105,6 +116,7 @@ pub fn unzip(
 }
 
 /// Lazy iterator that zips two slices with a transform function.
+/// Returned by `zipWith()`. See `zipWith()` for usage examples.
 pub fn ZipWithIterator(
     comptime A: type,
     comptime B: type,
@@ -162,6 +174,7 @@ pub fn zipWith(
 }
 
 /// Lazy iterator that pairs each element with its index.
+/// Returned by `enumerate()`. See `enumerate()` for usage examples.
 pub fn EnumerateIterator(comptime T: type) type {
     return struct {
         slice: []const T,
@@ -377,4 +390,48 @@ test "enumerate: collect" {
     try std.testing.expectEqual(@as(usize, 2), result.len);
     try std.testing.expectEqual(@as(usize, 0), result[0].a);
     try std.testing.expectEqual(@as(i32, 10), result[0].b);
+}
+
+test "zipWith: collect allocates correctly" {
+    const add = struct {
+        fn f(a: i32, b: i32) i32 {
+            return a + b;
+        }
+    }.f;
+    var it = zipWith(i32, i32, i32, &.{ 1, 2, 3 }, &.{ 10, 20, 30 }, add);
+    const result = try it.collect(std.testing.allocator);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 3), result.len);
+    try std.testing.expectEqual(@as(i32, 11), result[0]);
+    try std.testing.expectEqual(@as(i32, 22), result[1]);
+    try std.testing.expectEqual(@as(i32, 33), result[2]);
+}
+
+test "enumerate: single element" {
+    var it = enumerate(i32, &.{42});
+    const e = it.next().?;
+    try std.testing.expectEqual(@as(usize, 0), e.a);
+    try std.testing.expectEqual(@as(i32, 42), e.b);
+    try std.testing.expectEqual(
+        @as(?Pair(usize, i32), null),
+        it.next(),
+    );
+}
+
+test "zip: collect empty" {
+    var it = zip(i32, u8, &.{}, &.{});
+    const result = try it.collect(std.testing.allocator);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+test "zipWith: single pair" {
+    const mul = struct {
+        fn f(a: i32, b: i32) i32 {
+            return a * b;
+        }
+    }.f;
+    var it = zipWith(i32, i32, i32, &.{5}, &.{7}, mul);
+    try std.testing.expectEqual(@as(?i32, 35), it.next());
+    try std.testing.expectEqual(@as(?i32, null), it.next());
 }
