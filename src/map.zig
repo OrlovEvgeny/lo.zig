@@ -333,6 +333,105 @@ pub fn mapCount(
     return hash_map.count();
 }
 
+/// Transform both keys and values of a map using a function.
+/// Caller owns the returned map.
+pub fn mapEntries(
+    comptime K: type,
+    comptime V: type,
+    comptime K2: type,
+    comptime V2: type,
+    allocator: Allocator,
+    hash_map: *const std.AutoHashMap(K, V),
+    transform: *const fn (K, V) Entry(K2, V2),
+) Allocator.Error!std.AutoHashMap(K2, V2) {
+    var result = std.AutoHashMap(K2, V2).init(allocator);
+    errdefer result.deinit();
+    var it = hash_map.iterator();
+    while (it.next()) |entry| {
+        const e = transform(entry.key_ptr.*, entry.value_ptr.*);
+        try result.put(e.key, e.value);
+    }
+    return result;
+}
+
+/// Transform map entries into an allocated slice.
+/// Caller owns the returned slice.
+pub fn mapToSlice(
+    comptime K: type,
+    comptime V: type,
+    comptime R: type,
+    allocator: Allocator,
+    hash_map: *const std.AutoHashMap(K, V),
+    transform: *const fn (K, V) R,
+) Allocator.Error![]R {
+    var list = std.ArrayList(R){};
+    errdefer list.deinit(allocator);
+    var it = hash_map.iterator();
+    while (it.next()) |entry| {
+        try list.append(allocator, transform(entry.key_ptr.*, entry.value_ptr.*));
+    }
+    return list.toOwnedSlice(allocator);
+}
+
+/// Filter map entries by a predicate on the key.
+/// Caller owns the returned map.
+pub fn filterKeys(
+    comptime K: type,
+    comptime V: type,
+    allocator: Allocator,
+    hash_map: *const std.AutoHashMap(K, V),
+    predicate: *const fn (K) bool,
+) Allocator.Error!std.AutoHashMap(K, V) {
+    var result = std.AutoHashMap(K, V).init(allocator);
+    errdefer result.deinit();
+    var it = hash_map.iterator();
+    while (it.next()) |entry| {
+        if (predicate(entry.key_ptr.*)) {
+            try result.put(entry.key_ptr.*, entry.value_ptr.*);
+        }
+    }
+    return result;
+}
+
+/// Filter map entries by a predicate on the value.
+/// Caller owns the returned map.
+pub fn filterValues(
+    comptime K: type,
+    comptime V: type,
+    allocator: Allocator,
+    hash_map: *const std.AutoHashMap(K, V),
+    predicate: *const fn (V) bool,
+) Allocator.Error!std.AutoHashMap(K, V) {
+    var result = std.AutoHashMap(K, V).init(allocator);
+    errdefer result.deinit();
+    var it = hash_map.iterator();
+    while (it.next()) |entry| {
+        if (predicate(entry.value_ptr.*)) {
+            try result.put(entry.key_ptr.*, entry.value_ptr.*);
+        }
+    }
+    return result;
+}
+
+/// Merge N maps into one with last-write-wins semantics.
+/// Caller owns the returned map.
+pub fn assign(
+    comptime K: type,
+    comptime V: type,
+    allocator: Allocator,
+    maps: []const *const std.AutoHashMap(K, V),
+) Allocator.Error!std.AutoHashMap(K, V) {
+    var result = std.AutoHashMap(K, V).init(allocator);
+    errdefer result.deinit();
+    for (maps) |m| {
+        var it = m.iterator();
+        while (it.next()) |entry| {
+            try result.put(entry.key_ptr.*, entry.value_ptr.*);
+        }
+    }
+    return result;
+}
+
 // Tests.
 
 fn makeTestMap(allocator: Allocator) !std.AutoHashMap(u32, u8) {
