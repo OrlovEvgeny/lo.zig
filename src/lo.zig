@@ -153,6 +153,11 @@ pub const merge = hash_map.merge;
 pub const valueOr = hash_map.valueOr;
 pub const hasKey = hash_map.hasKey;
 pub const mapCount = hash_map.mapCount;
+pub const mapEntries = hash_map.mapEntries;
+pub const mapToSlice = hash_map.mapToSlice;
+pub const filterKeys = hash_map.filterKeys;
+pub const filterValues = hash_map.filterValues;
+pub const assign = hash_map.assign;
 
 // Re-export strings.zig
 pub const WordIterator = strings.WordIterator;
