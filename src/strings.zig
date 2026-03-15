@@ -882,3 +882,146 @@ test "substr: start >= end after clamping" {
 test "substr: empty input" {
     try std.testing.expectEqualStrings("", substr("", 0, 5));
 }
+
+// -- split tests --
+
+test "split: basic delimiter" {
+    var it = split("one,two,,four", ",");
+    try std.testing.expectEqualStrings("one", it.next().?);
+    try std.testing.expectEqualStrings("two", it.next().?);
+    try std.testing.expectEqualStrings("", it.next().?);
+    try std.testing.expectEqualStrings("four", it.next().?);
+    try std.testing.expectEqual(@as(?[]const u8, null), it.next());
+}
+
+test "split: delimiter not found" {
+    var it = split("hello", ",");
+    try std.testing.expectEqualStrings("hello", it.next().?);
+    try std.testing.expectEqual(@as(?[]const u8, null), it.next());
+}
+
+test "split: empty input" {
+    var it = split("", ",");
+    try std.testing.expectEqualStrings("", it.next().?);
+    try std.testing.expectEqual(@as(?[]const u8, null), it.next());
+}
+
+test "split: delimiter only" {
+    var it = split(",", ",");
+    try std.testing.expectEqualStrings("", it.next().?);
+    try std.testing.expectEqualStrings("", it.next().?);
+    try std.testing.expectEqual(@as(?[]const u8, null), it.next());
+}
+
+// -- splitAlloc tests --
+
+test "splitAlloc: basic" {
+    const alloc = std.testing.allocator;
+    const result = try splitAlloc(alloc, "a-b-c", "-");
+    defer alloc.free(result);
+    try std.testing.expectEqual(@as(usize, 3), result.len);
+    try std.testing.expectEqualStrings("a", result[0]);
+    try std.testing.expectEqualStrings("b", result[1]);
+    try std.testing.expectEqualStrings("c", result[2]);
+}
+
+test "splitAlloc: empty input" {
+    const alloc = std.testing.allocator;
+    const result = try splitAlloc(alloc, "", "-");
+    defer alloc.free(result);
+    try std.testing.expectEqual(@as(usize, 1), result.len);
+    try std.testing.expectEqualStrings("", result[0]);
+}
+
+test "splitAlloc: consecutive delimiters" {
+    const alloc = std.testing.allocator;
+    const result = try splitAlloc(alloc, "a,,b", ",");
+    defer alloc.free(result);
+    try std.testing.expectEqual(@as(usize, 3), result.len);
+    try std.testing.expectEqualStrings("a", result[0]);
+    try std.testing.expectEqualStrings("", result[1]);
+    try std.testing.expectEqualStrings("b", result[2]);
+}
+
+// -- join tests --
+
+test "join: basic" {
+    const alloc = std.testing.allocator;
+    const result = try join(alloc, ", ", &.{ "hello", "world" });
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings("hello, world", result);
+}
+
+test "join: single element" {
+    const alloc = std.testing.allocator;
+    const result = try join(alloc, "-", &.{"a"});
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings("a", result);
+}
+
+test "join: empty slice" {
+    const alloc = std.testing.allocator;
+    const result = try join(alloc, ", ", &.{});
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings("", result);
+}
+
+// -- replace tests --
+
+test "replace: first occurrence only" {
+    const alloc = std.testing.allocator;
+    const result = try replace(alloc, "hello hello", "hello", "hi");
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings("hi hello", result);
+}
+
+test "replace: needle not found" {
+    const alloc = std.testing.allocator;
+    const result = try replace(alloc, "hello", "xyz", "abc");
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings("hello", result);
+}
+
+test "replace: empty needle" {
+    const alloc = std.testing.allocator;
+    const result = try replace(alloc, "hello", "", "abc");
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings("hello", result);
+}
+
+test "replace: empty input" {
+    const alloc = std.testing.allocator;
+    const result = try replace(alloc, "", "a", "b");
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings("", result);
+}
+
+// -- replaceAll tests --
+
+test "replaceAll: all occurrences" {
+    const alloc = std.testing.allocator;
+    const result = try replaceAll(alloc, "hello hello", "hello", "hi");
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings("hi hi", result);
+}
+
+test "replaceAll: expanding replacement" {
+    const alloc = std.testing.allocator;
+    const result = try replaceAll(alloc, "aaa", "a", "bb");
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings("bbbbbb", result);
+}
+
+test "replaceAll: needle not found" {
+    const alloc = std.testing.allocator;
+    const result = try replaceAll(alloc, "hello", "xyz", "abc");
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings("hello", result);
+}
+
+test "replaceAll: empty needle guard" {
+    const alloc = std.testing.allocator;
+    const result = try replaceAll(alloc, "hello", "", "abc");
+    defer alloc.free(result);
+    try std.testing.expectEqualStrings("hello", result);
+}
