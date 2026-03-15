@@ -130,6 +130,10 @@ pub const repeat = slice.repeat;
 pub const repeatBy = slice.repeatBy;
 pub const isSorted = slice.isSorted;
 pub const equal = slice.equal;
+pub const sortBy = slice.sortBy;
+pub const sortByAlloc = slice.sortByAlloc;
+pub const concat = slice.concat;
+pub const splice = slice.splice;
 
 // Re-export map.zig
 pub const Entry = hash_map.Entry;
