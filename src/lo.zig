@@ -44,6 +44,15 @@ pub const rangeAlloc = math.rangeAlloc;
 pub const rangeWithStepAlloc = math.rangeWithStepAlloc;
 pub const RangeError = math.RangeError;
 pub const mode = math.mode;
+pub const median = math.median;
+pub const variance = math.variance;
+pub const stddev = math.stddev;
+pub const percentile = math.percentile;
+pub const inRange = math.inRange;
+pub const lerp = math.lerp;
+pub const remap = math.remap;
+pub const cumSum = math.cumSum;
+pub const cumProd = math.cumProd;
 
 // Re-export slice.zig
 pub const first = slice.first;
