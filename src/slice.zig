@@ -1657,6 +1657,116 @@ pub fn findUniques(
     return list.toOwnedSlice(allocator);
 }
 
+// Access with defaults.
+
+/// Returns the first element, or `default` if the slice is empty.
+///
+/// ```zig
+/// lo.firstOr(i32, &.{ 10, 20, 30 }, 0); // 10
+/// lo.firstOr(i32, &.{}, 42);             // 42
+/// ```
+pub fn firstOr(comptime T: type, slice_: []const T, default: T) T {
+    if (slice_.len == 0) return default;
+    return slice_[0];
+}
+
+/// Returns the last element, or `default` if the slice is empty.
+///
+/// ```zig
+/// lo.lastOr(i32, &.{ 10, 20, 30 }, 0); // 30
+/// lo.lastOr(i32, &.{}, 42);             // 42
+/// ```
+pub fn lastOr(comptime T: type, slice_: []const T, default: T) T {
+    if (slice_.len == 0) return default;
+    return slice_[slice_.len - 1];
+}
+
+/// Element at the given index with default. Negative indices count from the end.
+/// Returns `default` if out of bounds or the slice is empty.
+///
+/// ```zig
+/// lo.nthOr(i32, &.{ 10, 20, 30 }, 1, 0);  // 20
+/// lo.nthOr(i32, &.{ 10, 20, 30 }, -1, 0);  // 30
+/// lo.nthOr(i32, &.{ 10, 20, 30 }, 5, 99);  // 99
+/// ```
+pub fn nthOr(comptime T: type, slice_: []const T, index: isize, default: T) T {
+    const len = std.math.cast(isize, slice_.len) orelse return default;
+    var i = index;
+    if (i < 0) i += len;
+    if (i < 0 or i >= len) return default;
+    return slice_[@intCast(i)];
+}
+
+// Order-independent equality.
+
+/// True if two slices contain the same elements with the same multiplicities,
+/// regardless of order. Uses hash-based counting; T must be hashable.
+///
+/// ```zig
+/// try lo.elementsMatch(i32, allocator, &.{1,2,3}, &.{3,2,1}); // true
+/// try lo.elementsMatch(i32, allocator, &.{1,1,2}, &.{1,2,2}); // false
+/// ```
+pub fn elementsMatch(comptime T: type, allocator: Allocator, a: []const T, b: []const T) Allocator.Error!bool {
+    if (a.len != b.len) return false;
+    var counts = std.AutoHashMap(T, isize).init(allocator);
+    defer counts.deinit();
+    for (a) |item| {
+        const gop = try counts.getOrPut(item);
+        if (gop.found_existing) {
+            gop.value_ptr.* += 1;
+        } else {
+            gop.value_ptr.* = 1;
+        }
+    }
+    for (b) |item| {
+        const gop = try counts.getOrPut(item);
+        if (gop.found_existing) {
+            gop.value_ptr.* -= 1;
+        } else {
+            gop.value_ptr.* = -1;
+        }
+    }
+    var it = counts.valueIterator();
+    while (it.next()) |v| {
+        if (v.* != 0) return false;
+    }
+    return true;
+}
+
+// Extrema index.
+
+/// Returns the index of the minimum element, or null if empty.
+/// On ties, returns the index of the first occurrence.
+///
+/// ```zig
+/// lo.minIndex(i32, &.{ 3, 1, 4, 1, 5 }); // 1
+/// lo.minIndex(i32, &.{});                  // null
+/// ```
+pub fn minIndex(comptime T: type, slice_: []const T) ?usize {
+    if (slice_.len == 0) return null;
+    var best: usize = 0;
+    for (slice_[1..], 1..) |item, i| {
+        if (std.math.order(item, slice_[best]) == .lt) best = i;
+    }
+    return best;
+}
+
+/// Returns the index of the maximum element, or null if empty.
+/// On ties, returns the index of the first occurrence.
+///
+/// ```zig
+/// lo.maxIndex(i32, &.{ 3, 1, 4, 1, 5 }); // 4
+/// lo.maxIndex(i32, &.{});                  // null
+/// ```
+pub fn maxIndex(comptime T: type, slice_: []const T) ?usize {
+    if (slice_.len == 0) return null;
+    var best: usize = 0;
+    for (slice_[1..], 1..) |item, i| {
+        if (std.math.order(item, slice_[best]) == .gt) best = i;
+    }
+    return best;
+}
+
 // Equality helper, used throughout slice.zig.
 
 fn eql(comptime T: type, a: T, b: T) bool {
@@ -3626,4 +3736,124 @@ test "findUniques: single element" {
     const uniques = try findUniques(i32, std.testing.allocator, &.{42});
     defer std.testing.allocator.free(uniques);
     try std.testing.expectEqualSlices(i32, &.{42}, uniques);
+}
+
+// Tests: firstOr.
+
+test "firstOr: returns first element" {
+    try std.testing.expectEqual(@as(i32, 10), firstOr(i32, &.{ 10, 20, 30 }, 0));
+}
+
+test "firstOr: empty slice returns default" {
+    try std.testing.expectEqual(@as(i32, 42), firstOr(i32, &.{}, 42));
+}
+
+// Tests: lastOr.
+
+test "lastOr: returns last element" {
+    try std.testing.expectEqual(@as(i32, 30), lastOr(i32, &.{ 10, 20, 30 }, 0));
+}
+
+test "lastOr: empty slice returns default" {
+    try std.testing.expectEqual(@as(i32, 42), lastOr(i32, &.{}, 42));
+}
+
+// Tests: nthOr.
+
+test "nthOr: positive index" {
+    try std.testing.expectEqual(@as(i32, 20), nthOr(i32, &.{ 10, 20, 30 }, 1, 0));
+}
+
+test "nthOr: negative index wraps from end" {
+    try std.testing.expectEqual(@as(i32, 30), nthOr(i32, &.{ 10, 20, 30 }, -1, 0));
+}
+
+test "nthOr: out of bounds returns default" {
+    try std.testing.expectEqual(@as(i32, 99), nthOr(i32, &.{ 10, 20, 30 }, 5, 99));
+}
+
+test "nthOr: negative out of bounds returns default" {
+    try std.testing.expectEqual(@as(i32, 99), nthOr(i32, &.{ 10, 20, 30 }, -5, 99));
+}
+
+test "nthOr: empty slice returns default" {
+    try std.testing.expectEqual(@as(i32, 42), nthOr(i32, &.{}, 0, 42));
+}
+
+// Tests: elementsMatch.
+
+test "elementsMatch: same elements different order" {
+    try std.testing.expectEqual(true, try elementsMatch(i32, std.testing.allocator, &.{ 1, 2, 3 }, &.{ 3, 2, 1 }));
+}
+
+test "elementsMatch: same order" {
+    try std.testing.expectEqual(true, try elementsMatch(i32, std.testing.allocator, &.{ 1, 2, 3 }, &.{ 1, 2, 3 }));
+}
+
+test "elementsMatch: different elements" {
+    try std.testing.expectEqual(false, try elementsMatch(i32, std.testing.allocator, &.{ 1, 2, 3 }, &.{ 1, 2, 4 }));
+}
+
+test "elementsMatch: different lengths" {
+    try std.testing.expectEqual(false, try elementsMatch(i32, std.testing.allocator, &.{ 1, 2, 3 }, &.{ 1, 2 }));
+}
+
+test "elementsMatch: different multiplicities" {
+    try std.testing.expectEqual(false, try elementsMatch(i32, std.testing.allocator, &.{ 1, 1, 2 }, &.{ 1, 2, 2 }));
+}
+
+test "elementsMatch: same multiset" {
+    try std.testing.expectEqual(true, try elementsMatch(i32, std.testing.allocator, &.{ 1, 1, 2 }, &.{ 2, 1, 1 }));
+}
+
+test "elementsMatch: both empty" {
+    try std.testing.expectEqual(true, try elementsMatch(i32, std.testing.allocator, &.{}, &.{}));
+}
+
+test "elementsMatch: one empty" {
+    try std.testing.expectEqual(false, try elementsMatch(i32, std.testing.allocator, &.{1}, &.{}));
+}
+
+// Tests: minIndex.
+
+test "minIndex: basic" {
+    try std.testing.expectEqual(@as(?usize, 1), minIndex(i32, &.{ 3, 1, 4, 1, 5 }));
+}
+
+test "minIndex: descending" {
+    try std.testing.expectEqual(@as(?usize, 4), minIndex(i32, &.{ 5, 4, 3, 2, 1 }));
+}
+
+test "minIndex: single element" {
+    try std.testing.expectEqual(@as(?usize, 0), minIndex(i32, &.{1}));
+}
+
+test "minIndex: empty" {
+    try std.testing.expectEqual(@as(?usize, null), minIndex(i32, &.{}));
+}
+
+test "minIndex: ties return first" {
+    try std.testing.expectEqual(@as(?usize, 0), minIndex(i32, &.{ 3, 3, 3 }));
+}
+
+// Tests: maxIndex.
+
+test "maxIndex: basic" {
+    try std.testing.expectEqual(@as(?usize, 4), maxIndex(i32, &.{ 3, 1, 4, 1, 5 }));
+}
+
+test "maxIndex: descending" {
+    try std.testing.expectEqual(@as(?usize, 0), maxIndex(i32, &.{ 5, 4, 3, 2, 1 }));
+}
+
+test "maxIndex: single element" {
+    try std.testing.expectEqual(@as(?usize, 0), maxIndex(i32, &.{1}));
+}
+
+test "maxIndex: empty" {
+    try std.testing.expectEqual(@as(?usize, null), maxIndex(i32, &.{}));
+}
+
+test "maxIndex: ties return first" {
+    try std.testing.expectEqual(@as(?usize, 0), maxIndex(i32, &.{ 3, 3, 3 }));
 }
