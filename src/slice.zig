@@ -1419,10 +1419,12 @@ pub fn keyBy(
     items: []const T,
     key_fn: *const fn (T) K,
 ) Allocator.Error!std.AutoHashMap(K, T) {
-    _ = allocator;
-    _ = items;
-    _ = key_fn;
-    unreachable;
+    var result = std.AutoHashMap(K, T).init(allocator);
+    errdefer result.deinit();
+    for (items) |item| {
+        try result.put(key_fn(item), item);
+    }
+    return result;
 }
 
 /// Convert a slice to a map with custom key and value extraction.
@@ -1445,10 +1447,13 @@ pub fn associate(
     items: []const T,
     transform: *const fn (T) AssocEntry(K, V),
 ) Allocator.Error!std.AutoHashMap(K, V) {
-    _ = allocator;
-    _ = items;
-    _ = transform;
-    unreachable;
+    var result = std.AutoHashMap(K, V).init(allocator);
+    errdefer result.deinit();
+    for (items) |item| {
+        const entry = transform(item);
+        try result.put(entry.key, entry.value);
+    }
+    return result;
 }
 
 /// Count elements by a key function.
@@ -1470,10 +1475,18 @@ pub fn countBy(
     items: []const T,
     key_fn: *const fn (T) K,
 ) Allocator.Error!std.AutoHashMap(K, usize) {
-    _ = allocator;
-    _ = items;
-    _ = key_fn;
-    unreachable;
+    var freq = std.AutoHashMap(K, usize).init(allocator);
+    errdefer freq.deinit();
+    for (items) |item| {
+        const k = key_fn(item);
+        const entry = try freq.getOrPut(k);
+        if (entry.found_existing) {
+            entry.value_ptr.* += 1;
+        } else {
+            entry.value_ptr.* = 1;
+        }
+    }
+    return freq;
 }
 
 /// Find elements appearing more than once.
@@ -1492,9 +1505,32 @@ pub fn findDuplicates(
     allocator: Allocator,
     items: []const T,
 ) Allocator.Error![]T {
-    _ = allocator;
-    _ = items;
-    unreachable;
+    // Pass 1: count occurrences.
+    var counts = std.AutoHashMap(T, usize).init(allocator);
+    defer counts.deinit();
+    for (items) |item| {
+        const entry = try counts.getOrPut(item);
+        if (entry.found_existing) {
+            entry.value_ptr.* += 1;
+        } else {
+            entry.value_ptr.* = 1;
+        }
+    }
+    // Pass 2: collect first occurrence of each element with count > 1.
+    var seen = std.AutoHashMap(T, void).init(allocator);
+    defer seen.deinit();
+    var list = std.ArrayList(T){};
+    errdefer list.deinit(allocator);
+    for (items) |item| {
+        const c = counts.get(item) orelse continue;
+        if (c > 1) {
+            const gop = try seen.getOrPut(item);
+            if (!gop.found_existing) {
+                try list.append(allocator, item);
+            }
+        }
+    }
+    return list.toOwnedSlice(allocator);
 }
 
 /// Find elements appearing exactly once.
@@ -1512,9 +1548,27 @@ pub fn findUniques(
     allocator: Allocator,
     items: []const T,
 ) Allocator.Error![]T {
-    _ = allocator;
-    _ = items;
-    unreachable;
+    // Pass 1: count occurrences.
+    var counts = std.AutoHashMap(T, usize).init(allocator);
+    defer counts.deinit();
+    for (items) |item| {
+        const entry = try counts.getOrPut(item);
+        if (entry.found_existing) {
+            entry.value_ptr.* += 1;
+        } else {
+            entry.value_ptr.* = 1;
+        }
+    }
+    // Pass 2: collect elements with count == 1 in original order.
+    var list = std.ArrayList(T){};
+    errdefer list.deinit(allocator);
+    for (items) |item| {
+        const c = counts.get(item) orelse continue;
+        if (c == 1) {
+            try list.append(allocator, item);
+        }
+    }
+    return list.toOwnedSlice(allocator);
 }
 
 // Equality helper, used throughout slice.zig.
