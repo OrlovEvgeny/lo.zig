@@ -89,6 +89,33 @@ pub fn isEmpty(comptime T: type, value: T) bool {
     return std.meta.eql(value, empty(T));
 }
 
+/// Returns true if the value does **not** equal the zero/default for its type.
+///
+/// This is the logical negation of `isEmpty`.
+///
+/// ```zig
+/// lo.isNotEmpty(i32, 42);  // true
+/// lo.isNotEmpty(i32, 0);   // false
+/// ```
+pub fn isNotEmpty(comptime T: type, value: T) bool {
+    return !isEmpty(T, value);
+}
+
+/// Selects one of two values based on a boolean condition.
+///
+/// Returns `if_output` when `condition` is true, `else_output` otherwise.
+/// Both branches are evaluated eagerly (not short-circuited).
+/// Works at comptime.
+///
+/// ```zig
+/// lo.ternary(i32, true, 10, 20);  // 10
+/// lo.ternary(i32, false, 10, 20); // 20
+/// ```
+pub fn ternary(comptime T: type, condition: bool, if_output: T, else_output: T) T {
+    if (condition) return if_output;
+    return else_output;
+}
+
 /// Convert a mutable slice to a const slice.
 ///
 /// ```zig
