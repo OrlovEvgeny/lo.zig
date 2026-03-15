@@ -352,6 +352,36 @@ pub fn percentile(comptime T: type, allocator: Allocator, slice: []const T, p: f
     return lo_val + frac * (hi_val - lo_val);
 }
 
+/// Population variance of a numeric slice (N denominator).
+/// Returns null for empty slices, 0.0 for single-element slices.
+/// Uses a two-pass algorithm: computes mean, then sums squared deviations.
+///
+/// ```zig
+/// lo.variance(i32, &.{ 2, 4, 4, 4, 5, 5, 7, 9 }); // 4.0
+/// ```
+pub fn variance(comptime T: type, slice: []const T) ?f64 {
+    if (slice.len == 0) return null;
+
+    const m = mean(T, slice);
+    var acc: f64 = 0.0;
+    for (slice) |v| {
+        const diff = toF64(T, v) - m;
+        acc += diff * diff;
+    }
+    return acc / @as(f64, @floatFromInt(slice.len));
+}
+
+/// Standard deviation of a numeric slice (sqrt of population variance).
+/// Returns null for empty slices, 0.0 for single-element slices.
+///
+/// ```zig
+/// lo.stddev(i32, &.{ 2, 4, 4, 4, 5, 5, 7, 9 }); // 2.0
+/// ```
+pub fn stddev(comptime T: type, slice: []const T) ?f64 {
+    const v = variance(T, slice) orelse return null;
+    return @sqrt(v);
+}
+
 // Comparison and conversion helpers.
 
 fn compare(comptime T: type, a: T, b: T) std.math.Order {
