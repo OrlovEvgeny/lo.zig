@@ -5,6 +5,8 @@ const Allocator = std.mem.Allocator;
 /// snake_case, kebab-case, and whitespace boundaries.
 /// Returned slices borrow from the input string -- they are NOT copies.
 /// Do not use returned slices after the input string is freed or goes out of scope.
+///
+/// Returned by `words()`. See `words()` for usage examples.
 pub const WordIterator = struct {
     input: []const u8,
     index: usize = 0,
@@ -72,6 +74,13 @@ pub fn words(input: []const u8) WordIterator {
 }
 
 /// Split a string into words, collected into an allocated slice.
+/// Caller owns the returned slice.
+///
+/// ```zig
+/// const ws = try lo.wordsAlloc(allocator, "camelCase");
+/// defer allocator.free(ws);
+/// // ws: &.{ "camel", "Case" }
+/// ```
 pub fn wordsAlloc(
     allocator: Allocator,
     input: []const u8,

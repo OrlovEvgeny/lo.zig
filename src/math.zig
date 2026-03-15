@@ -47,6 +47,12 @@ pub fn product(comptime T: type, slice: []const T) T {
 }
 
 /// Multiply elements after applying a transform function.
+///
+/// ```zig
+/// const vals = [_]i32{ 2, 3, 4 };
+/// const double = struct { fn f(x: i32) i64 { return @as(i64, x) * 2; } }.f;
+/// lo.productBy(i32, i64, &vals, double); // 192
+/// ```
 pub fn productBy(
     comptime T: type,
     comptime R: type,
@@ -75,6 +81,12 @@ pub fn mean(comptime T: type, slice: []const T) f64 {
 }
 
 /// Arithmetic mean after applying a transform function.
+///
+/// ```zig
+/// const vals = [_]i32{ 10, 20, 30 };
+/// const asF64 = struct { fn f(x: i32) f64 { return @floatFromInt(x); } }.f;
+/// lo.meanBy(i32, &vals, asF64); // 20.0
+/// ```
 pub fn meanBy(
     comptime T: type,
     slice: []const T,
@@ -171,6 +183,7 @@ pub fn minMax(comptime T: type, slice: []const T) ?MinMax(T) {
     return result;
 }
 
+/// Result type returned by `minMax()`, holding both `.min_val` and `.max_val`.
 pub fn MinMax(comptime T: type) type {
     return struct {
         min_val: T,
@@ -249,6 +262,7 @@ pub fn rangeWithStepAlloc(
     return result;
 }
 
+/// Error set for `rangeWithStepAlloc`. Includes `InvalidArgument` for zero step.
 pub const RangeError = Allocator.Error || error{InvalidArgument};
 
 /// Returns the most frequently occurring value in a slice.
