@@ -146,6 +146,12 @@ pub const nthOr = slice.nthOr;
 pub const elementsMatch = slice.elementsMatch;
 pub const minIndex = slice.minIndex;
 pub const maxIndex = slice.maxIndex;
+pub const sortByField = slice.sortByField;
+pub const sortByFieldAlloc = slice.sortByFieldAlloc;
+pub const TimesIterator = slice.TimesIterator;
+pub const times = slice.times;
+pub const timesAlloc = slice.timesAlloc;
+pub const toSortedAlloc = slice.toSortedAlloc;
 
 // Re-export map.zig
 pub const Entry = hash_map.Entry;
