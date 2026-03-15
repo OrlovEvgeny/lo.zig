@@ -382,6 +382,91 @@ pub fn stddev(comptime T: type, slice: []const T) ?f64 {
     return @sqrt(v);
 }
 
+/// Check if a value falls within the half-open range [start, end).
+/// Returns false if start >= end (empty range).
+/// Supports integer and float types; compile error for others.
+///
+/// ```zig
+/// lo.inRange(i32, 3, 1, 5); // true
+/// lo.inRange(i32, 5, 1, 5); // false (end is exclusive)
+/// ```
+pub fn inRange(comptime T: type, value: T, start: T, end: T) bool {
+    switch (@typeInfo(T)) {
+        .int, .comptime_int, .float, .comptime_float => {},
+        else => @compileError("inRange: unsupported type " ++ @typeName(T)),
+    }
+    return value >= start and value < end;
+}
+
+/// Linear interpolation between two values.
+/// Returns `a + t * (b - a)`. Float-only.
+///
+/// ```zig
+/// lo.lerp(f64, 0.0, 10.0, 0.5); // 5.0
+/// ```
+pub fn lerp(comptime T: type, a: T, b: T, t: T) T {
+    switch (@typeInfo(T)) {
+        .float, .comptime_float => {},
+        else => @compileError("lerp: unsupported type " ++ @typeName(T) ++ ", float required"),
+    }
+    return a + t * (b - a);
+}
+
+/// Remap a value from one range to another.
+/// Maps `value` in [in_min, in_max] to the corresponding position in [out_min, out_max].
+/// Float-only.
+///
+/// ```zig
+/// lo.remap(f64, 5.0, 0.0, 10.0, 0.0, 100.0); // 50.0
+/// ```
+pub fn remap(comptime T: type, value: T, in_min: T, in_max: T, out_min: T, out_max: T) T {
+    switch (@typeInfo(T)) {
+        .float, .comptime_float => {},
+        else => @compileError("remap: unsupported type " ++ @typeName(T) ++ ", float required"),
+    }
+    return out_min + (value - in_min) / (in_max - in_min) * (out_max - out_min);
+}
+
+/// Cumulative sum of a numeric slice.
+/// Returns an allocated slice where each element is the running total.
+/// Caller owns and must free the returned slice.
+///
+/// ```zig
+/// const result = try lo.cumSum(i32, allocator, &.{ 1, 2, 3, 4 });
+/// defer allocator.free(result);
+/// // result == { 1, 3, 6, 10 }
+/// ```
+pub fn cumSum(comptime T: type, allocator: Allocator, slice: []const T) Allocator.Error![]T {
+    if (slice.len == 0) return allocator.alloc(T, 0);
+    const result = try allocator.alloc(T, slice.len);
+    var acc: T = 0;
+    for (slice, 0..) |v, i| {
+        acc += v;
+        result[i] = acc;
+    }
+    return result;
+}
+
+/// Cumulative product of a numeric slice.
+/// Returns an allocated slice where each element is the running product.
+/// Caller owns and must free the returned slice.
+///
+/// ```zig
+/// const result = try lo.cumProd(i32, allocator, &.{ 1, 2, 3, 4 });
+/// defer allocator.free(result);
+/// // result == { 1, 2, 6, 24 }
+/// ```
+pub fn cumProd(comptime T: type, allocator: Allocator, slice: []const T) Allocator.Error![]T {
+    if (slice.len == 0) return allocator.alloc(T, 0);
+    const result = try allocator.alloc(T, slice.len);
+    var acc: T = 1;
+    for (slice, 0..) |v, i| {
+        acc *= v;
+        result[i] = acc;
+    }
+    return result;
+}
+
 // Comparison and conversion helpers.
 
 fn compare(comptime T: type, a: T, b: T) std.math.Order {
