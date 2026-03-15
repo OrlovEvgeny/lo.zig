@@ -296,6 +296,62 @@ pub fn mode(
     return best;
 }
 
+/// Returns the median of a numeric slice, or null if empty.
+/// For odd-length slices, returns the middle element.
+/// For even-length slices, returns the average of the two middle elements.
+/// Allocates a temporary copy for sorting; the input slice is not mutated.
+///
+/// ```zig
+/// const m = try lo.median(i32, allocator, &.{ 1, 2, 3, 4 });
+/// // m == 2.5
+/// ```
+pub fn median(comptime T: type, allocator: Allocator, slice: []const T) Allocator.Error!?f64 {
+    if (slice.len == 0) return null;
+
+    const copy = try allocator.dupe(T, slice);
+    defer allocator.free(copy);
+    std.mem.sort(T, copy, {}, std.sort.asc(T));
+
+    const mid = slice.len / 2;
+    if (slice.len % 2 == 1) {
+        return toF64(T, copy[mid]);
+    } else {
+        return (toF64(T, copy[mid - 1]) + toF64(T, copy[mid])) / 2.0;
+    }
+}
+
+/// Returns the nth percentile of a numeric slice using linear interpolation.
+/// Returns null for empty slices or if p is outside [0, 100].
+/// p=0 returns the minimum, p=100 returns the maximum.
+/// Allocates a temporary copy for sorting; the input slice is not mutated.
+///
+/// ```zig
+/// const p = try lo.percentile(i32, allocator, &.{ 1, 2, 3, 4, 5 }, 50.0);
+/// // p == 3.0
+/// ```
+pub fn percentile(comptime T: type, allocator: Allocator, slice: []const T, p: f64) Allocator.Error!?f64 {
+    if (slice.len == 0) return null;
+    if (p < 0.0 or p > 100.0) return null;
+
+    const copy = try allocator.dupe(T, slice);
+    defer allocator.free(copy);
+    std.mem.sort(T, copy, {}, std.sort.asc(T));
+
+    if (slice.len == 1) return toF64(T, copy[0]);
+
+    const n: f64 = @floatFromInt(slice.len);
+    const rank = (p / 100.0) * (n - 1.0);
+    const lo_idx: usize = @intFromFloat(@floor(rank));
+    const hi_idx: usize = @intFromFloat(@ceil(rank));
+
+    if (lo_idx == hi_idx) return toF64(T, copy[lo_idx]);
+
+    const frac = rank - @floor(rank);
+    const lo_val = toF64(T, copy[lo_idx]);
+    const hi_val = toF64(T, copy[hi_idx]);
+    return lo_val + frac * (hi_val - lo_val);
+}
+
 // Comparison and conversion helpers.
 
 fn compare(comptime T: type, a: T, b: T) std.math.Order {
