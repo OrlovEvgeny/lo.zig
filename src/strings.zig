@@ -60,16 +60,6 @@ fn isLower(c: u8) bool {
     return c >= 'a' and c <= 'z';
 }
 
-fn toLower(c: u8) u8 {
-    if (isUpper(c)) return c + 32;
-    return c;
-}
-
-fn toUpper(c: u8) u8 {
-    if (isLower(c)) return c - 32;
-    return c;
-}
-
 /// Split a string into words. Returns a lazy iterator.
 ///
 /// ```zig
@@ -112,11 +102,11 @@ pub fn camelCase(
     while (it.next()) |word| {
         for (word, 0..) |c, i| {
             if (first_word) {
-                try list.append(allocator, toLower(c));
+                try list.append(allocator, std.ascii.toLower(c));
             } else if (i == 0) {
-                try list.append(allocator, toUpper(c));
+                try list.append(allocator, std.ascii.toUpper(c));
             } else {
-                try list.append(allocator, toLower(c));
+                try list.append(allocator, std.ascii.toLower(c));
             }
         }
         first_word = false;
@@ -140,9 +130,9 @@ pub fn pascalCase(
     while (it.next()) |word| {
         for (word, 0..) |c, i| {
             if (i == 0) {
-                try list.append(allocator, toUpper(c));
+                try list.append(allocator, std.ascii.toUpper(c));
             } else {
-                try list.append(allocator, toLower(c));
+                try list.append(allocator, std.ascii.toLower(c));
             }
         }
     }
@@ -187,7 +177,7 @@ fn joinWords(
     while (it.next()) |word| {
         if (!first_word) try list.append(allocator, sep);
         for (word) |c| {
-            try list.append(allocator, toLower(c));
+            try list.append(allocator, std.ascii.toLower(c));
         }
         first_word = false;
     }
@@ -209,7 +199,7 @@ pub fn capitalize(
     }
     const result = try allocator.alloc(u8, input.len);
     @memcpy(result, input);
-    result[0] = toUpper(input[0]);
+    result[0] = std.ascii.toUpper(input[0]);
     return result;
 }
 
@@ -344,6 +334,119 @@ pub fn randomString(
         c.* = charset[random.intRangeLessThan(usize, 0, charset.len)];
     }
     return result;
+}
+
+/// Trim whitespace from both ends of a string.
+///
+/// ```zig
+/// const s = lo.trim("  hello  ");
+/// // s == "hello"
+/// ```
+pub fn trim(input: []const u8) []const u8 {
+    return std.mem.trim(u8, input, &std.ascii.whitespace);
+}
+
+/// Trim whitespace from the start (left) of a string.
+///
+/// ```zig
+/// const s = lo.trimStart("  hello  ");
+/// // s == "hello  "
+/// ```
+pub fn trimStart(input: []const u8) []const u8 {
+    return std.mem.trimLeft(u8, input, &std.ascii.whitespace);
+}
+
+/// Trim whitespace from the end (right) of a string.
+///
+/// ```zig
+/// const s = lo.trimEnd("  hello  ");
+/// // s == "  hello"
+/// ```
+pub fn trimEnd(input: []const u8) []const u8 {
+    return std.mem.trimRight(u8, input, &std.ascii.whitespace);
+}
+
+/// Check if a string starts with a given prefix.
+///
+/// ```zig
+/// lo.startsWith("hello world", "hello"); // true
+/// ```
+pub fn startsWith(haystack: []const u8, needle: []const u8) bool {
+    return std.mem.startsWith(u8, haystack, needle);
+}
+
+/// Check if a string ends with a given suffix.
+///
+/// ```zig
+/// lo.endsWith("hello world", "world"); // true
+/// ```
+pub fn endsWith(haystack: []const u8, needle: []const u8) bool {
+    return std.mem.endsWith(u8, haystack, needle);
+}
+
+/// Check if a string contains a substring.
+///
+/// ```zig
+/// lo.includes("hello world", "world"); // true
+/// ```
+pub fn includes(haystack: []const u8, needle: []const u8) bool {
+    return std.mem.indexOf(u8, haystack, needle) != null;
+}
+
+/// Convert an entire string to lowercase (ASCII).
+/// Caller owns the returned memory.
+///
+/// ```zig
+/// const s = try lo.toLower(alloc, "Hello World");
+/// defer alloc.free(s);
+/// // s == "hello world"
+/// ```
+pub fn toLower(allocator: Allocator, input: []const u8) Allocator.Error![]u8 {
+    return std.ascii.allocLowerString(allocator, input);
+}
+
+/// Convert an entire string to uppercase (ASCII).
+/// Caller owns the returned memory.
+///
+/// ```zig
+/// const s = try lo.toUpper(alloc, "Hello World");
+/// defer alloc.free(s);
+/// // s == "HELLO WORLD"
+/// ```
+pub fn toUpper(allocator: Allocator, input: []const u8) Allocator.Error![]u8 {
+    return std.ascii.allocUpperString(allocator, input);
+}
+
+/// Lowercase just the first character of a string (ASCII).
+/// Caller owns the returned memory.
+///
+/// ```zig
+/// const s = try lo.lowerFirst(alloc, "Hello");
+/// defer alloc.free(s);
+/// // s == "hello"
+/// ```
+pub fn lowerFirst(allocator: Allocator, input: []const u8) Allocator.Error![]u8 {
+    if (input.len == 0) {
+        return allocator.alloc(u8, 0);
+    }
+    const result = try allocator.alloc(u8, input.len);
+    @memcpy(result, input);
+    result[0] = std.ascii.toLower(input[0]);
+    return result;
+}
+
+/// Extract a substring by start and end byte indices.
+/// Indices are clamped to the string length. Returns empty if start >= end.
+///
+/// ```zig
+/// const s = lo.substr("hello", 2, 5);
+/// // s == "llo"
+/// ```
+pub fn substr(input: []const u8, start: usize, end: usize) []const u8 {
+    const s = @min(start, input.len);
+    const e = @min(end, input.len);
+    if (s >= e) return input[0..0];
+    return input[s..e];
 }
 
 // Tests.
