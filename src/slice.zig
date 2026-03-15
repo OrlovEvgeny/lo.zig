@@ -532,10 +532,6 @@ pub fn MapIterator(comptime T: type, comptime R: type) type {
             }
             return list.toOwnedSlice(allocator);
         }
-
-        pub fn reset(self: *Self) void {
-            self.index = 0;
-        }
     };
 }
 
@@ -593,10 +589,6 @@ pub fn MapIndexIterator(comptime T: type, comptime R: type) type {
             }
             return list.toOwnedSlice(allocator);
         }
-
-        pub fn reset(self: *Self) void {
-            self.index = 0;
-        }
     };
 }
 
@@ -635,10 +627,6 @@ pub fn FilterIterator(comptime T: type) type {
                 try list.append(allocator, item);
             }
             return list.toOwnedSlice(allocator);
-        }
-
-        pub fn reset(self: *Self) void {
-            self.index = 0;
         }
     };
 }
@@ -694,10 +682,6 @@ pub fn RejectIterator(comptime T: type) type {
                 try list.append(allocator, item);
             }
             return list.toOwnedSlice(allocator);
-        }
-
-        pub fn reset(self: *Self) void {
-            self.index = 0;
         }
     };
 }
@@ -759,11 +743,6 @@ pub fn FlattenIterator(comptime T: type) type {
             }
             return list.toOwnedSlice(allocator);
         }
-
-        pub fn reset(self: *Self) void {
-            self.outer = 0;
-            self.inner = 0;
-        }
     };
 }
 
@@ -823,12 +802,6 @@ pub fn FlatMapIterator(comptime T: type, comptime R: type) type {
                 try list.append(allocator, item);
             }
             return list.toOwnedSlice(allocator);
-        }
-
-        pub fn reset(self: *Self) void {
-            self.outer = 0;
-            self.inner_slice = &[_]R{};
-            self.inner_index = 0;
         }
     };
 }
@@ -904,10 +877,6 @@ pub fn CompactIterator(comptime T: type) type {
             }
             return list.toOwnedSlice(allocator);
         }
-
-        pub fn reset(self: *Self) void {
-            self.index = 0;
-        }
     };
 }
 
@@ -933,6 +902,9 @@ pub fn compactAlloc(
 }
 
 /// Lazy iterator over fixed-size chunks of a slice.
+/// Returns successive fixed-size sub-slices of the input.
+/// Returned slices borrow from the input -- they are NOT copies.
+/// Do not use returned slices after the input slice is freed or goes out of scope.
 pub fn ChunkIterator(comptime T: type) type {
     return struct {
         slice: []const T,
@@ -947,10 +919,6 @@ pub fn ChunkIterator(comptime T: type) type {
             const result = self.slice[self.index..end];
             self.index = end;
             return result;
-        }
-
-        pub fn reset(self: *Self) void {
-            self.index = 0;
         }
     };
 }
@@ -1004,10 +972,6 @@ pub fn WithoutIterator(comptime T: type) type {
                 try list.append(allocator, item);
             }
             return list.toOwnedSlice(allocator);
-        }
-
-        pub fn reset(self: *Self) void {
-            self.index = 0;
         }
     };
 }
@@ -2144,14 +2108,6 @@ test "map: collect allocates result" {
     const result = try it.collect(std.testing.allocator);
     defer std.testing.allocator.free(result);
     try std.testing.expectEqualSlices(i64, &.{ 2, 4, 6 }, result);
-}
-
-test "map: reset restarts iteration" {
-    var it = map(i32, i64, &.{ 1, 2 }, double);
-    _ = it.next();
-    _ = it.next();
-    it.reset();
-    try std.testing.expectEqual(@as(?i64, 2), it.next());
 }
 
 test "mapAlloc: transforms into allocated slice" {

@@ -3,6 +3,8 @@ const Allocator = std.mem.Allocator;
 
 /// Iterator that splits a string into words at camelCase, PascalCase,
 /// snake_case, kebab-case, and whitespace boundaries.
+/// Returned slices borrow from the input string -- they are NOT copies.
+/// Do not use returned slices after the input string is freed or goes out of scope.
 pub const WordIterator = struct {
     input: []const u8,
     index: usize = 0,
@@ -43,10 +45,6 @@ pub const WordIterator = struct {
         }
         if (self.index == start) return null;
         return self.input[start..self.index];
-    }
-
-    pub fn reset(self: *WordIterator) void {
-        self.index = 0;
     }
 };
 
