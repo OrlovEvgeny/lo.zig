@@ -1,12 +1,17 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-/// A key-value pair.
+/// A generic key-value pair type used by map utilities.
+///
+/// ```zig
+/// const e = lo.Entry(u32, u8){ .key = 1, .value = 'a' };
+/// ```
 pub fn Entry(comptime K: type, comptime V: type) type {
     return struct { key: K, value: V };
 }
 
-/// Iterator over keys of an AutoHashMap.
+/// Iterator over map keys. Returned by `keys()`.
+/// See `keys()` for usage examples.
 pub fn KeyIterator(comptime K: type, comptime V: type) type {
     return struct {
         inner: std.AutoHashMap(K, V).Iterator,
@@ -20,7 +25,8 @@ pub fn KeyIterator(comptime K: type, comptime V: type) type {
     };
 }
 
-/// Iterator over values of an AutoHashMap.
+/// Iterator over map values. Returned by `values()`.
+/// See `values()` for usage examples.
 pub fn ValueIterator(comptime K: type, comptime V: type) type {
     return struct {
         inner: std.AutoHashMap(K, V).Iterator,
@@ -34,7 +40,8 @@ pub fn ValueIterator(comptime K: type, comptime V: type) type {
     };
 }
 
-/// Iterator over key-value pairs of an AutoHashMap.
+/// Iterator over map key-value pairs. Returned by `entries()`.
+/// See `entries()` for usage examples.
 pub fn EntryIterator(comptime K: type, comptime V: type) type {
     return struct {
         inner: std.AutoHashMap(K, V).Iterator,
@@ -68,6 +75,12 @@ pub fn keys(
 }
 
 /// Collect all keys into an allocated slice.
+/// Caller owns the returned slice.
+///
+/// ```zig
+/// const ks = try lo.keysAlloc(u32, u8, allocator, &my_map);
+/// defer allocator.free(ks);
+/// ```
 pub fn keysAlloc(
     comptime K: type,
     comptime V: type,
@@ -98,6 +111,12 @@ pub fn values(
 }
 
 /// Collect all values into an allocated slice.
+/// Caller owns the returned slice.
+///
+/// ```zig
+/// const vs = try lo.valuesAlloc(u32, u8, allocator, &my_map);
+/// defer allocator.free(vs);
+/// ```
 pub fn valuesAlloc(
     comptime K: type,
     comptime V: type,
@@ -128,6 +147,12 @@ pub fn entries(
 }
 
 /// Collect all key-value pairs into an allocated slice.
+/// Caller owns the returned slice.
+///
+/// ```zig
+/// const es = try lo.entriesAlloc(u32, u8, allocator, &my_map);
+/// defer allocator.free(es);
+/// ```
 pub fn entriesAlloc(
     comptime K: type,
     comptime V: type,
@@ -170,6 +195,11 @@ pub fn fromEntries(
 
 /// Transform map keys using a function.
 /// Caller owns the returned map.
+///
+/// ```zig
+/// var result = try lo.mapKeys(u32, u8, u64, allocator, &m, timesTwo);
+/// defer result.deinit();
+/// ```
 pub fn mapKeys(
     comptime K: type,
     comptime V: type,
@@ -189,6 +219,11 @@ pub fn mapKeys(
 
 /// Transform map values using a function.
 /// Caller owns the returned map.
+///
+/// ```zig
+/// var result = try lo.mapValues(u32, u8, u16, allocator, &m, multiply);
+/// defer result.deinit();
+/// ```
 pub fn mapValues(
     comptime K: type,
     comptime V: type,
@@ -208,6 +243,11 @@ pub fn mapValues(
 
 /// Filter map entries by a predicate on key and value.
 /// Caller owns the returned map.
+///
+/// ```zig
+/// var result = try lo.filterMap(u32, u8, allocator, &m, keyGt1);
+/// defer result.deinit();
+/// ```
 pub fn filterMap(
     comptime K: type,
     comptime V: type,
@@ -228,6 +268,11 @@ pub fn filterMap(
 
 /// Keep only entries with the specified keys.
 /// Caller owns the returned map.
+///
+/// ```zig
+/// var result = try lo.pickKeys(u32, u8, allocator, m, &.{ 1, 3 });
+/// defer result.deinit();
+/// ```
 pub fn pickKeys(
     comptime K: type,
     comptime V: type,
@@ -247,6 +292,11 @@ pub fn pickKeys(
 
 /// Remove entries with the specified keys.
 /// Caller owns the returned map.
+///
+/// ```zig
+/// var result = try lo.omitKeys(u32, u8, allocator, &m, &.{ 2, 3 });
+/// defer result.deinit();
+/// ```
 pub fn omitKeys(
     comptime K: type,
     comptime V: type,
@@ -271,6 +321,11 @@ pub fn omitKeys(
 
 /// Swap keys and values. Caller owns the returned map.
 /// Duplicate values in the source become a single key in the result.
+///
+/// ```zig
+/// var result = try lo.invert(u32, u8, allocator, &m);
+/// defer result.deinit();
+/// ```
 pub fn invert(
     comptime K: type,
     comptime V: type,
@@ -287,6 +342,10 @@ pub fn invert(
 }
 
 /// Merge entries from source into dest. Source values overwrite on conflict.
+///
+/// ```zig
+/// try lo.merge(u32, u8, &dest, &source);
+/// ```
 pub fn merge(
     comptime K: type,
     comptime V: type,
@@ -315,6 +374,10 @@ pub fn valueOr(
 }
 
 /// True if the map contains the given key.
+///
+/// ```zig
+/// lo.hasKey(u32, u8, m, 1); // true
+/// ```
 pub fn hasKey(
     comptime K: type,
     comptime V: type,
@@ -325,6 +388,10 @@ pub fn hasKey(
 }
 
 /// Number of entries in the map.
+///
+/// ```zig
+/// lo.mapCount(u32, u8, m); // 3
+/// ```
 pub fn mapCount(
     comptime K: type,
     comptime V: type,
@@ -335,6 +402,11 @@ pub fn mapCount(
 
 /// Transform both keys and values of a map using a function.
 /// Caller owns the returned map.
+///
+/// ```zig
+/// var result = try lo.mapEntries(u32, u8, u64, u16, allocator, &m, xform);
+/// defer result.deinit();
+/// ```
 pub fn mapEntries(
     comptime K: type,
     comptime V: type,
@@ -356,6 +428,11 @@ pub fn mapEntries(
 
 /// Transform map entries into an allocated slice.
 /// Caller owns the returned slice.
+///
+/// ```zig
+/// const result = try lo.mapToSlice(u32, u8, u64, allocator, &m, sumKeyVal);
+/// defer allocator.free(result);
+/// ```
 pub fn mapToSlice(
     comptime K: type,
     comptime V: type,
@@ -375,6 +452,11 @@ pub fn mapToSlice(
 
 /// Filter map entries by a predicate on the key.
 /// Caller owns the returned map.
+///
+/// ```zig
+/// var result = try lo.filterKeys(u32, u8, allocator, &m, isEven);
+/// defer result.deinit();
+/// ```
 pub fn filterKeys(
     comptime K: type,
     comptime V: type,
@@ -395,6 +477,11 @@ pub fn filterKeys(
 
 /// Filter map entries by a predicate on the value.
 /// Caller owns the returned map.
+///
+/// ```zig
+/// var result = try lo.filterValues(u32, u8, allocator, &m, isPositive);
+/// defer result.deinit();
+/// ```
 pub fn filterValues(
     comptime K: type,
     comptime V: type,
@@ -415,6 +502,11 @@ pub fn filterValues(
 
 /// Merge N maps into one with last-write-wins semantics.
 /// Caller owns the returned map.
+///
+/// ```zig
+/// var result = try lo.assign(u32, u8, allocator, &.{ &m1, &m2 });
+/// defer result.deinit();
+/// ```
 pub fn assign(
     comptime K: type,
     comptime V: type,
