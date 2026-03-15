@@ -168,6 +168,13 @@ pub const toLower = strings.toLower;
 pub const toUpper = strings.toUpper;
 pub const lowerFirst = strings.lowerFirst;
 pub const substr = strings.substr;
+pub const split = strings.split;
+pub const splitAlloc = strings.splitAlloc;
+pub const join = strings.join;
+pub const replace = strings.replace;
+pub const replaceAll = strings.replaceAll;
+pub const StringChunkIterator = strings.StringChunkIterator;
+pub const chunkString = strings.chunkString;
 
 // Re-export tuples.zig
 pub const Pair = tuples.Pair;
