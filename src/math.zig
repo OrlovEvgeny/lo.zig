@@ -252,6 +252,7 @@ pub fn rangeWithStepAlloc(
 pub const RangeError = Allocator.Error || error{InvalidArgument};
 
 /// Returns the most frequently occurring value in a slice.
+/// When multiple values share the highest frequency, returns the smallest value.
 /// Requires allocation for an internal frequency map.
 /// Returns null for empty slices.
 ///
@@ -282,9 +283,14 @@ pub fn mode(
     var best_count: usize = 0;
     var it = counts.iterator();
     while (it.next()) |entry| {
-        if (entry.value_ptr.* > best_count) {
-            best_count = entry.value_ptr.*;
-            best = entry.key_ptr.*;
+        const count_val = entry.value_ptr.*;
+        const key = entry.key_ptr.*;
+        if (count_val > best_count or
+            (count_val == best_count and (best == null or
+            std.math.order(key, best.?) == .lt)))
+        {
+            best_count = count_val;
+            best = key;
         }
     }
     return best;
