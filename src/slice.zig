@@ -508,6 +508,7 @@ pub fn forEachIndex(
 // Iterators and transformation.
 
 /// Lazy iterator that applies a transform to each element.
+/// Returned by `map()`. See `map()` for usage examples.
 pub fn MapIterator(comptime T: type, comptime R: type) type {
     return struct {
         slice: []const T,
@@ -551,6 +552,12 @@ pub fn map(
 }
 
 /// Transform each element and collect into an allocated slice.
+/// Caller owns the returned slice.
+///
+/// ```zig
+/// const result = try lo.mapAlloc(i32, i32, allocator, &.{1, 2, 3}, double);
+/// defer allocator.free(result);
+/// ```
 pub fn mapAlloc(
     comptime T: type,
     comptime R: type,
@@ -565,7 +572,8 @@ pub fn mapAlloc(
     return result;
 }
 
-/// Lazy iterator that transforms each element with its index.
+/// Lazy iterator that applies an index-aware transform.
+/// Returned by `mapIndex()`. See `mapIndex()` for usage examples.
 pub fn MapIndexIterator(comptime T: type, comptime R: type) type {
     return struct {
         slice: []const T,
@@ -593,6 +601,11 @@ pub fn MapIndexIterator(comptime T: type, comptime R: type) type {
 }
 
 /// Transform each element with its index. Returns a lazy iterator.
+///
+/// ```zig
+/// var it = lo.mapIndex(i32, i64, &.{10, 20}, addIndex);
+/// it.next(); // addIndex(10, 0)
+/// ```
 pub fn mapIndex(
     comptime T: type,
     comptime R: type,
@@ -603,6 +616,7 @@ pub fn mapIndex(
 }
 
 /// Lazy iterator that yields elements matching a predicate.
+/// Returned by `filter()`. See `filter()` for usage examples.
 pub fn FilterIterator(comptime T: type) type {
     return struct {
         slice: []const T,
@@ -647,6 +661,12 @@ pub fn filter(
 }
 
 /// Keep elements matching the predicate, collected into an allocated slice.
+/// Caller owns the returned slice.
+///
+/// ```zig
+/// const result = try lo.filterAlloc(i32, allocator, &.{1, 2, 3, 4}, isEven);
+/// defer allocator.free(result);
+/// ```
 pub fn filterAlloc(
     comptime T: type,
     allocator: Allocator,
@@ -657,7 +677,8 @@ pub fn filterAlloc(
     return it.collect(allocator);
 }
 
-/// Lazy iterator that yields elements NOT matching a predicate.
+/// Lazy iterator that skips elements matching a predicate.
+/// Returned by `reject()`. See `reject()` for usage examples.
 pub fn RejectIterator(comptime T: type) type {
     return struct {
         slice: []const T,
@@ -702,6 +723,12 @@ pub fn reject(
 }
 
 /// Remove elements matching the predicate, collected into an allocated slice.
+/// Caller owns the returned slice.
+///
+/// ```zig
+/// const result = try lo.rejectAlloc(i32, allocator, &.{1, 2, 3, 4}, isEven);
+/// defer allocator.free(result);
+/// ```
 pub fn rejectAlloc(
     comptime T: type,
     allocator: Allocator,
@@ -712,7 +739,8 @@ pub fn rejectAlloc(
     return it.collect(allocator);
 }
 
-/// Lazy iterator that flattens a slice of slices into a single sequence.
+/// Lazy iterator that flattens nested slices.
+/// Returned by `flatten()`. See `flatten()` for usage examples.
 pub fn FlattenIterator(comptime T: type) type {
     return struct {
         slices: []const []const T,
@@ -761,6 +789,13 @@ pub fn flatten(
 }
 
 /// Flatten a slice of slices into an allocated slice.
+/// Caller owns the returned slice.
+///
+/// ```zig
+/// const data = [_][]const i32{ &.{1, 2}, &.{3, 4} };
+/// const result = try lo.flattenAlloc(i32, allocator, &data);
+/// defer allocator.free(result);
+/// ```
 pub fn flattenAlloc(
     comptime T: type,
     allocator: Allocator,
@@ -770,7 +805,8 @@ pub fn flattenAlloc(
     return it.collect(allocator);
 }
 
-/// Lazy iterator that maps then flattens.
+/// Lazy iterator that maps and flattens.
+/// Returned by `flatMap()`. See `flatMap()` for usage examples.
 pub fn FlatMapIterator(comptime T: type, comptime R: type) type {
     return struct {
         slice: []const T,
@@ -821,6 +857,12 @@ pub fn flatMap(
 }
 
 /// Map then flatten, collected into an allocated slice.
+/// Caller owns the returned slice.
+///
+/// ```zig
+/// const result = try lo.flatMapAlloc(i32, u8, allocator, &.{1, 2}, toDigits);
+/// defer allocator.free(result);
+/// ```
 pub fn flatMapAlloc(
     comptime T: type,
     comptime R: type,
@@ -832,7 +874,8 @@ pub fn flatMapAlloc(
     return it.collect(allocator);
 }
 
-/// Lazy iterator that removes zero/null/default values.
+/// Lazy iterator that skips null values.
+/// Returned by `compact()`. See `compact()` for usage examples.
 pub fn CompactIterator(comptime T: type) type {
     return struct {
         slice: []const T,
@@ -892,6 +935,12 @@ pub fn compact(comptime T: type, slice: []const T) CompactIterator(T) {
 }
 
 /// Remove zero/null/default values into an allocated slice.
+/// Caller owns the returned slice.
+///
+/// ```zig
+/// const result = try lo.compactAlloc(?i32, allocator, &.{ 1, null, 3 });
+/// defer allocator.free(result);
+/// ```
 pub fn compactAlloc(
     comptime T: type,
     allocator: Allocator,
@@ -902,9 +951,8 @@ pub fn compactAlloc(
 }
 
 /// Lazy iterator over fixed-size chunks of a slice.
-/// Returns successive fixed-size sub-slices of the input.
-/// Returned slices borrow from the input -- they are NOT copies.
-/// Do not use returned slices after the input slice is freed or goes out of scope.
+/// Returned by `chunk()`. See `chunk()` for usage examples.
+/// Returned sub-slices borrow from the input -- they are NOT copies.
 pub fn ChunkIterator(comptime T: type) type {
     return struct {
         slice: []const T,
@@ -940,7 +988,8 @@ pub fn chunk(
     return .{ .slice = slice, .size = size };
 }
 
-/// Lazy iterator that excludes specific values.
+/// Lazy iterator that skips specified values.
+/// Returned by `without()`. See `without()` for usage examples.
 pub fn WithoutIterator(comptime T: type) type {
     return struct {
         slice: []const T,
@@ -1080,7 +1129,8 @@ pub fn groupBy(
     return groups;
 }
 
-/// Partition result holding two allocated slices.
+/// Result type holding two allocated slices from `partition()`.
+/// Call `deinit(allocator)` to free both slices.
 pub fn PartitionResult(comptime T: type) type {
     return struct {
         matching: []T,
