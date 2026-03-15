@@ -555,6 +555,45 @@ pub fn replaceAll(
     return std.mem.replaceOwned(u8, allocator, input, needle, replacement);
 }
 
+/// Iterator that splits a string into fixed-size byte chunks.
+/// The last chunk may be smaller than `size` if the input length
+/// is not evenly divisible.
+/// Returned slices borrow from the input string -- they are NOT copies.
+///
+/// ```zig
+/// var it = lo.chunkString("abcdefgh", 3);
+/// it.next(); // "abc"
+/// it.next(); // "def"
+/// it.next(); // "gh"
+/// it.next(); // null
+/// ```
+pub const StringChunkIterator = struct {
+    input: []const u8,
+    size: usize,
+    index: usize = 0,
+
+    pub fn next(self: *StringChunkIterator) ?[]const u8 {
+        if (self.size == 0 or self.index >= self.input.len) return null;
+        const end = @min(self.index + self.size, self.input.len);
+        const chunk = self.input[self.index..end];
+        self.index = end;
+        return chunk;
+    }
+};
+
+/// Split a string into fixed-size byte chunks via a lazy iterator.
+/// Returns null immediately for empty input or zero size.
+///
+/// ```zig
+/// var it = lo.chunkString("abcdefgh", 3);
+/// it.next(); // "abc"
+/// it.next(); // "def"
+/// it.next(); // "gh"
+/// ```
+pub fn chunkString(input: []const u8, size: usize) StringChunkIterator {
+    return .{ .input = input, .size = size };
+}
+
 // Tests.
 
 test "words: camelCase" {
