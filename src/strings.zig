@@ -314,13 +314,14 @@ pub fn padRight(
 }
 
 /// Count the number of Unicode codepoints in a UTF-8 string.
+/// Returns `error.InvalidUtf8` if the input contains invalid UTF-8 bytes.
 ///
 /// ```zig
-/// lo.runeLength("hello"); // 5
-/// lo.runeLength("こんにちは"); // 5
+/// const len = try lo.runeLength("hello"); // 5
+/// const len2 = try lo.runeLength("こんにちは"); // 5
 /// ```
-pub fn runeLength(input: []const u8) usize {
-    var view = std.unicode.Utf8View.initUnchecked(input);
+pub fn runeLength(input: []const u8) error{InvalidUtf8}!usize {
+    const view = std.unicode.Utf8View.init(input) catch return error.InvalidUtf8;
     var iter = view.iterator();
     var len: usize = 0;
     while (iter.nextCodepoint() != null) : (len += 1) {}
