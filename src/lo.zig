@@ -25,6 +25,8 @@ pub const coalesce = types.coalesce;
 pub const empty = types.empty;
 pub const isEmpty = types.isEmpty;
 pub const toConst = types.toConst;
+pub const isNotEmpty = types.isNotEmpty;
+pub const ternary = types.ternary;
 
 // Re-export math.zig
 pub const sum = math.sum;
