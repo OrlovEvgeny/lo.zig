@@ -606,3 +606,176 @@ test "randomString: all chars are alphanumeric" {
         );
     }
 }
+
+// -- trim tests --
+
+test "trim: whitespace both ends" {
+    try std.testing.expectEqualStrings("hello", trim("  hello  "));
+}
+
+test "trim: empty string" {
+    try std.testing.expectEqualStrings("", trim(""));
+}
+
+test "trim: all whitespace" {
+    try std.testing.expectEqualStrings("", trim("   \t\n  "));
+}
+
+test "trim: no whitespace" {
+    try std.testing.expectEqualStrings("no-whitespace", trim("no-whitespace"));
+}
+
+test "trimStart: removes leading whitespace" {
+    try std.testing.expectEqualStrings("hello  ", trimStart("  hello  "));
+}
+
+test "trimEnd: removes trailing whitespace" {
+    try std.testing.expectEqualStrings("  hello", trimEnd("  hello  "));
+}
+
+test "trimStart: empty string" {
+    try std.testing.expectEqualStrings("", trimStart(""));
+}
+
+test "trimEnd: empty string" {
+    try std.testing.expectEqualStrings("", trimEnd(""));
+}
+
+// -- startsWith / endsWith / includes tests --
+
+test "startsWith: matching prefix" {
+    try std.testing.expect(startsWith("hello world", "hello"));
+}
+
+test "startsWith: empty needle" {
+    try std.testing.expect(startsWith("hello", ""));
+}
+
+test "startsWith: non-matching" {
+    try std.testing.expect(!startsWith("hello", "world"));
+}
+
+test "startsWith: empty haystack" {
+    try std.testing.expect(!startsWith("", "a"));
+}
+
+test "endsWith: matching suffix" {
+    try std.testing.expect(endsWith("hello world", "world"));
+}
+
+test "endsWith: empty needle" {
+    try std.testing.expect(endsWith("hello", ""));
+}
+
+test "endsWith: non-matching" {
+    try std.testing.expect(!endsWith("hello", "world"));
+}
+
+test "includes: substring present" {
+    try std.testing.expect(includes("hello world", "world"));
+}
+
+test "includes: empty needle" {
+    try std.testing.expect(includes("hello", ""));
+}
+
+test "includes: substring absent" {
+    try std.testing.expect(!includes("hello", "xyz"));
+}
+
+test "includes: empty haystack" {
+    try std.testing.expect(!includes("", "a"));
+}
+
+// -- toLower / toUpper tests --
+
+test "toLower: mixed case" {
+    const alloc = std.testing.allocator;
+    const s = try toLower(alloc, "Hello World");
+    defer alloc.free(s);
+    try std.testing.expectEqualStrings("hello world", s);
+}
+
+test "toLower: empty string" {
+    const alloc = std.testing.allocator;
+    const s = try toLower(alloc, "");
+    defer alloc.free(s);
+    try std.testing.expectEqualStrings("", s);
+}
+
+test "toLower: all uppercase" {
+    const alloc = std.testing.allocator;
+    const s = try toLower(alloc, "HELLO");
+    defer alloc.free(s);
+    try std.testing.expectEqualStrings("hello", s);
+}
+
+test "toUpper: mixed case" {
+    const alloc = std.testing.allocator;
+    const s = try toUpper(alloc, "Hello World");
+    defer alloc.free(s);
+    try std.testing.expectEqualStrings("HELLO WORLD", s);
+}
+
+test "toUpper: empty string" {
+    const alloc = std.testing.allocator;
+    const s = try toUpper(alloc, "");
+    defer alloc.free(s);
+    try std.testing.expectEqualStrings("", s);
+}
+
+// -- lowerFirst tests --
+
+test "lowerFirst: uppercase first" {
+    const alloc = std.testing.allocator;
+    const s = try lowerFirst(alloc, "Hello");
+    defer alloc.free(s);
+    try std.testing.expectEqualStrings("hello", s);
+}
+
+test "lowerFirst: empty string" {
+    const alloc = std.testing.allocator;
+    const s = try lowerFirst(alloc, "");
+    defer alloc.free(s);
+    try std.testing.expectEqualStrings("", s);
+}
+
+test "lowerFirst: already lowercase" {
+    const alloc = std.testing.allocator;
+    const s = try lowerFirst(alloc, "hello");
+    defer alloc.free(s);
+    try std.testing.expectEqualStrings("hello", s);
+}
+
+test "lowerFirst: single char" {
+    const alloc = std.testing.allocator;
+    const s = try lowerFirst(alloc, "H");
+    defer alloc.free(s);
+    try std.testing.expectEqualStrings("h", s);
+}
+
+// -- substr tests --
+
+test "substr: middle to end" {
+    try std.testing.expectEqualStrings("llo", substr("hello", 2, 5));
+}
+
+test "substr: full string" {
+    try std.testing.expectEqualStrings("hello", substr("hello", 0, 5));
+}
+
+test "substr: end beyond length" {
+    try std.testing.expectEqualStrings("lo", substr("hello", 3, 100));
+}
+
+test "substr: start at length" {
+    try std.testing.expectEqualStrings("", substr("hello", 5, 10));
+}
+
+test "substr: start >= end after clamping" {
+    try std.testing.expectEqualStrings("", substr("hello", 4, 2));
+}
+
+test "substr: empty input" {
+    try std.testing.expectEqualStrings("", substr("", 0, 5));
+}
