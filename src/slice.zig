@@ -1434,6 +1434,132 @@ pub fn sortByAlloc(comptime T: type, comptime K: type, allocator: Allocator, ite
     return copy;
 }
 
+/// Sorts a slice of structs in-place by a named field.
+///
+/// Uses comptime field access via `std.meta.FieldEnum(T)` so the field name
+/// is passed as a comptime enum literal (e.g. `.age`). Only works with numeric
+/// fields (integers and floats) — `std.math.order` will produce a compile
+/// error for non-numeric types, which is acceptable and self-documenting.
+///
+/// The sort is stable: elements with equal keys keep their original order.
+///
+/// ```zig
+/// const Person = struct { name: []const u8, age: u32 };
+/// var items = [_]Person{ .{ .name = "bob", .age = 30 }, .{ .name = "alice", .age = 25 } };
+/// lo.sortByField(Person, &items, .age);
+/// // items[0].age == 25, items[1].age == 30
+/// ```
+pub fn sortByField(comptime T: type, items: []T, comptime field: std.meta.FieldEnum(T)) void {
+    const field_name = @tagName(field);
+    std.sort.block(T, items, {}, struct {
+        fn lessThan(_: void, a: T, b: T) bool {
+            return std.math.order(@field(a, field_name), @field(b, field_name)) == .lt;
+        }
+    }.lessThan);
+}
+
+/// Returns a sorted copy of the slice sorted by a named struct field.
+///
+/// Caller owns the returned slice and must free it with `allocator.free`.
+/// The original slice is not modified.
+///
+/// ```zig
+/// const Person = struct { name: []const u8, age: u32 };
+/// const sorted = try lo.sortByFieldAlloc(Person, allocator, &people, .age);
+/// defer allocator.free(sorted);
+/// ```
+pub fn sortByFieldAlloc(comptime T: type, allocator: Allocator, items: []const T, comptime field: std.meta.FieldEnum(T)) Allocator.Error![]T {
+    const copy = try allocator.dupe(T, items);
+    errdefer allocator.free(copy);
+    sortByField(T, copy, field);
+    return copy;
+}
+
+/// Returns a sorted copy of a slice in natural ascending order.
+///
+/// Caller owns the returned slice and must free it with `allocator.free`.
+/// The original slice is not modified.
+///
+/// ```zig
+/// const sorted = try lo.toSortedAlloc(i32, allocator, &.{ 3, 1, 2 });
+/// defer allocator.free(sorted);
+/// // sorted == { 1, 2, 3 }
+/// ```
+pub fn toSortedAlloc(comptime T: type, allocator: Allocator, items: []const T) Allocator.Error![]T {
+    const copy = try allocator.dupe(T, items);
+    errdefer allocator.free(copy);
+    std.mem.sort(T, copy, {}, std.sort.asc(T));
+    return copy;
+}
+
+/// Lazy iterator that calls a function N times with indices 0..N-1.
+///
+/// ```zig
+/// var iter = lo.times(usize, 3, struct {
+///     fn f(i: usize) usize { return i * i; }
+/// }.f);
+/// // iter.next() -> 0, 1, 4, null
+/// ```
+pub fn TimesIterator(comptime R: type) type {
+    return struct {
+        func: *const fn (usize) R,
+        n: usize,
+        index: usize = 0,
+
+        const Self = @This();
+
+        /// Returns the next result or null when exhausted.
+        pub fn next(self: *Self) ?R {
+            if (self.index >= self.n) return null;
+            const result = self.func(self.index);
+            self.index += 1;
+            return result;
+        }
+
+        /// Eagerly collects all remaining results into an allocated slice.
+        ///
+        /// Caller owns the returned slice and must free it with `allocator.free`.
+        pub fn collect(self: *Self, allocator: Allocator) Allocator.Error![]R {
+            var list = std.ArrayList(R){};
+            errdefer list.deinit(allocator);
+            while (self.next()) |val| {
+                try list.append(allocator, val);
+            }
+            return list.toOwnedSlice(allocator);
+        }
+    };
+}
+
+/// Creates a lazy iterator that calls `func` N times with indices 0..N-1.
+///
+/// ```zig
+/// var iter = lo.times(usize, 4, square);
+/// while (iter.next()) |val| { ... }
+/// ```
+pub fn times(comptime R: type, n: usize, func: *const fn (usize) R) TimesIterator(R) {
+    return .{ .func = func, .n = n };
+}
+
+/// Eagerly calls `func` N times with indices 0..N-1 and returns the results.
+///
+/// Pre-allocates the result slice (known size). More efficient than
+/// `times().collect()` for cases where all results are needed immediately.
+///
+/// Caller owns the returned slice and must free it with `allocator.free`.
+///
+/// ```zig
+/// const squares = try lo.timesAlloc(usize, allocator, 4, square);
+/// defer allocator.free(squares);
+/// // squares == { 0, 1, 4, 9 }
+/// ```
+pub fn timesAlloc(comptime R: type, allocator: Allocator, n: usize, func: *const fn (usize) R) Allocator.Error![]R {
+    const result = try allocator.alloc(R, n);
+    for (result, 0..) |*slot, i| {
+        slot.* = func(i);
+    }
+    return result;
+}
+
 /// Concatenates multiple slices into a single allocated slice.
 ///
 /// Caller owns the returned slice and must free it with `allocator.free`.
@@ -1655,6 +1781,203 @@ pub fn findUniques(
         }
     }
     return list.toOwnedSlice(allocator);
+}
+
+// Running accumulation (scan).
+
+/// Lazy iterator that yields intermediate accumulator values.
+///
+/// Like `reduce` but emits every intermediate result instead of only the final one.
+/// Zero-allocation: the iterator holds the accumulator state inline.
+///
+/// ```zig
+/// const add = struct { fn f(a: i32, b: i32) i32 { return a + b; } }.f;
+/// var it = lo.scan(i32, i32, &.{ 1, 2, 3 }, add, 0);
+/// it.next(); // 1
+/// it.next(); // 3
+/// it.next(); // 6
+/// it.next(); // null
+/// ```
+pub fn ScanIterator(comptime T: type, comptime R: type) type {
+    return struct {
+        slice: []const T,
+        reducer: *const fn (R, T) R,
+        acc: R,
+        index: usize = 0,
+
+        const Self = @This();
+
+        pub fn next(self: *Self) ?R {
+            if (self.index >= self.slice.len) return null;
+            self.acc = self.reducer(self.acc, self.slice[self.index]);
+            self.index += 1;
+            return self.acc;
+        }
+
+        /// Collect remaining elements into an allocated slice.
+        pub fn collect(self: *Self, allocator: Allocator) Allocator.Error![]R {
+            var list = std.ArrayList(R){};
+            errdefer list.deinit(allocator);
+            while (self.next()) |item| {
+                try list.append(allocator, item);
+            }
+            return list.toOwnedSlice(allocator);
+        }
+    };
+}
+
+/// Returns a lazy iterator yielding intermediate accumulator values.
+///
+/// ```zig
+/// const add = struct { fn f(a: i32, b: i32) i32 { return a + b; } }.f;
+/// var it = lo.scan(i32, i32, &.{ 1, 2, 3 }, add, 0);
+/// ```
+pub fn scan(
+    comptime T: type,
+    comptime R: type,
+    slice_: []const T,
+    reducer: *const fn (R, T) R,
+    initial_value: R,
+) ScanIterator(T, R) {
+    return .{ .slice = slice_, .reducer = reducer, .acc = initial_value };
+}
+
+/// Eagerly compute all intermediate accumulator values into an allocated slice.
+///
+/// More efficient than `scan().collect()` because the output size is known
+/// (equal to the input length), so a single allocation suffices.
+///
+/// ```zig
+/// const add = struct { fn f(a: i32, b: i32) i32 { return a + b; } }.f;
+/// const result = try lo.scanAlloc(i32, i32, allocator, &.{ 1, 2, 3 }, add, 0);
+/// // result: &.{ 1, 3, 6 }
+/// ```
+pub fn scanAlloc(
+    comptime T: type,
+    comptime R: type,
+    allocator: Allocator,
+    slice_: []const T,
+    reducer: *const fn (R, T) R,
+    initial_value: R,
+) Allocator.Error![]R {
+    const result = try allocator.alloc(R, slice_.len);
+    var acc = initial_value;
+    for (slice_, 0..) |item, i| {
+        acc = reducer(acc, item);
+        result[i] = acc;
+    }
+    return result;
+}
+
+// Sliding window.
+
+/// Lazy iterator that yields overlapping sub-slices of a fixed size.
+///
+/// Windows borrow from the input slice (zero allocation). Advances by 1 each step.
+/// Returns null when the remaining elements are fewer than the window size,
+/// or when size is 0.
+///
+/// ```zig
+/// var it = lo.window(i32, &.{ 1, 2, 3, 4, 5 }, 3);
+/// it.next(); // &.{ 1, 2, 3 }
+/// it.next(); // &.{ 2, 3, 4 }
+/// it.next(); // &.{ 3, 4, 5 }
+/// it.next(); // null
+/// ```
+pub fn WindowIterator(comptime T: type) type {
+    return struct {
+        slice: []const T,
+        size: usize,
+        index: usize = 0,
+
+        const Self = @This();
+
+        pub fn next(self: *Self) ?[]const T {
+            if (self.size == 0 or self.slice.len < self.size) return null;
+            if (self.index + self.size > self.slice.len) return null;
+            const result = self.slice[self.index .. self.index + self.size];
+            self.index += 1;
+            return result;
+        }
+    };
+}
+
+/// Returns a lazy iterator over sliding windows of the given size.
+///
+/// ```zig
+/// var it = lo.window(i32, &.{ 1, 2, 3, 4, 5 }, 3);
+/// it.next(); // &.{ 1, 2, 3 }
+/// ```
+pub fn window(
+    comptime T: type,
+    slice_: []const T,
+    size: usize,
+) WindowIterator(T) {
+    return .{ .slice = slice_, .size = size };
+}
+
+// Round-robin interleave.
+
+/// Lazy iterator that yields elements from multiple slices in round-robin order.
+///
+/// Exhausted slices are skipped. The iterator is zero-allocation; `collect()`
+/// allocates the result via the provided allocator.
+///
+/// ```zig
+/// var it = lo.interleave(i32, &.{ &.{ 1, 2, 3 }, &.{ 4, 5, 6 } });
+/// it.next(); // 1
+/// it.next(); // 4
+/// it.next(); // 2
+/// it.next(); // 5
+/// it.next(); // 3
+/// it.next(); // 6
+/// it.next(); // null
+/// ```
+pub fn InterleaveIterator(comptime T: type) type {
+    return struct {
+        slices: []const []const T,
+        cursor: usize = 0,
+
+        const Self = @This();
+
+        pub fn next(self: *Self) ?T {
+            if (self.slices.len == 0) return null;
+            var max_len: usize = 0;
+            for (self.slices) |s| max_len = @max(max_len, s.len);
+
+            while (true) {
+                const round = self.cursor / self.slices.len;
+                const slot = self.cursor % self.slices.len;
+                if (round >= max_len) return null;
+                self.cursor += 1;
+                if (round < self.slices[slot].len) {
+                    return self.slices[slot][round];
+                }
+            }
+        }
+
+        /// Collect remaining elements into an allocated slice.
+        pub fn collect(self: *Self, allocator: Allocator) Allocator.Error![]T {
+            var list = std.ArrayList(T){};
+            errdefer list.deinit(allocator);
+            while (self.next()) |item| {
+                try list.append(allocator, item);
+            }
+            return list.toOwnedSlice(allocator);
+        }
+    };
+}
+
+/// Returns a lazy iterator that round-robin interleaves multiple slices.
+///
+/// ```zig
+/// var it = lo.interleave(i32, &.{ &.{ 1, 2, 3 }, &.{ 4, 5, 6 } });
+/// ```
+pub fn interleave(
+    comptime T: type,
+    slices: []const []const T,
+) InterleaveIterator(T) {
+    return .{ .slices = slices };
 }
 
 // Access with defaults.
@@ -3738,6 +4061,198 @@ test "findUniques: single element" {
     try std.testing.expectEqualSlices(i32, &.{42}, uniques);
 }
 
+// Tests: scan / scanAlloc.
+
+test "scan: running sum" {
+    const addFn = struct {
+        fn f(acc: i32, x: i32) i32 {
+            return acc + x;
+        }
+    }.f;
+    var it = scan(i32, i32, &.{ 1, 2, 3 }, addFn, 0);
+    try std.testing.expectEqual(@as(?i32, 1), it.next());
+    try std.testing.expectEqual(@as(?i32, 3), it.next());
+    try std.testing.expectEqual(@as(?i32, 6), it.next());
+    try std.testing.expectEqual(@as(?i32, null), it.next());
+}
+
+test "scan: running product" {
+    const mulFn = struct {
+        fn f(acc: i32, x: i32) i32 {
+            return acc * x;
+        }
+    }.f;
+    var it = scan(i32, i32, &.{ 2, 3, 4 }, mulFn, 1);
+    try std.testing.expectEqual(@as(?i32, 2), it.next());
+    try std.testing.expectEqual(@as(?i32, 6), it.next());
+    try std.testing.expectEqual(@as(?i32, 24), it.next());
+    try std.testing.expectEqual(@as(?i32, null), it.next());
+}
+
+test "scan: empty slice" {
+    const addFn = struct {
+        fn f(acc: i32, x: i32) i32 {
+            return acc + x;
+        }
+    }.f;
+    var it = scan(i32, i32, &.{}, addFn, 0);
+    try std.testing.expectEqual(@as(?i32, null), it.next());
+}
+
+test "scan: single element" {
+    const addFn = struct {
+        fn f(acc: i32, x: i32) i32 {
+            return acc + x;
+        }
+    }.f;
+    var it = scan(i32, i32, &.{5}, addFn, 0);
+    try std.testing.expectEqual(@as(?i32, 5), it.next());
+    try std.testing.expectEqual(@as(?i32, null), it.next());
+}
+
+test "scan: type conversion i32 to f64" {
+    const castAdd = struct {
+        fn f(acc: f64, x: i32) f64 {
+            return acc + @as(f64, @floatFromInt(x));
+        }
+    }.f;
+    var it = scan(i32, f64, &.{ 1, 2, 3 }, castAdd, 0.0);
+    try std.testing.expectEqual(@as(?f64, 1.0), it.next());
+    try std.testing.expectEqual(@as(?f64, 3.0), it.next());
+    try std.testing.expectEqual(@as(?f64, 6.0), it.next());
+    try std.testing.expectEqual(@as(?f64, null), it.next());
+}
+
+test "scanAlloc: running sum" {
+    const addFn = struct {
+        fn f(acc: i32, x: i32) i32 {
+            return acc + x;
+        }
+    }.f;
+    const result = try scanAlloc(i32, i32, std.testing.allocator, &.{ 1, 2, 3 }, addFn, 0);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 3, 6 }, result);
+}
+
+test "scanAlloc: empty slice" {
+    const addFn = struct {
+        fn f(acc: i32, x: i32) i32 {
+            return acc + x;
+        }
+    }.f;
+    const result = try scanAlloc(i32, i32, std.testing.allocator, &.{}, addFn, 0);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{}, result);
+}
+
+test "scan collect: same results as scanAlloc" {
+    const addFn = struct {
+        fn f(acc: i32, x: i32) i32 {
+            return acc + x;
+        }
+    }.f;
+    var it = scan(i32, i32, &.{ 1, 2, 3 }, addFn, 0);
+    const result = try it.collect(std.testing.allocator);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 3, 6 }, result);
+}
+
+// Tests: window.
+
+test "window: size 3 on 5 elements" {
+    var it = window(i32, &.{ 1, 2, 3, 4, 5 }, 3);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, it.next().?);
+    try std.testing.expectEqualSlices(i32, &.{ 2, 3, 4 }, it.next().?);
+    try std.testing.expectEqualSlices(i32, &.{ 3, 4, 5 }, it.next().?);
+    try std.testing.expectEqual(@as(?[]const i32, null), it.next());
+}
+
+test "window: size equals slice length" {
+    var it = window(i32, &.{ 1, 2, 3 }, 3);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, it.next().?);
+    try std.testing.expectEqual(@as(?[]const i32, null), it.next());
+}
+
+test "window: size larger than slice" {
+    var it = window(i32, &.{ 1, 2 }, 3);
+    try std.testing.expectEqual(@as(?[]const i32, null), it.next());
+}
+
+test "window: size 0" {
+    var it = window(i32, &.{ 1, 2, 3 }, 0);
+    try std.testing.expectEqual(@as(?[]const i32, null), it.next());
+}
+
+test "window: empty slice" {
+    var it = window(i32, &.{}, 3);
+    try std.testing.expectEqual(@as(?[]const i32, null), it.next());
+}
+
+test "window: size 1" {
+    var it = window(i32, &.{ 1, 2, 3 }, 1);
+    try std.testing.expectEqualSlices(i32, &.{1}, it.next().?);
+    try std.testing.expectEqualSlices(i32, &.{2}, it.next().?);
+    try std.testing.expectEqualSlices(i32, &.{3}, it.next().?);
+    try std.testing.expectEqual(@as(?[]const i32, null), it.next());
+}
+
+// Tests: interleave.
+
+test "interleave: equal length slices" {
+    var it = interleave(i32, &.{ &.{ 1, 2, 3 }, &.{ 4, 5, 6 } });
+    try std.testing.expectEqual(@as(?i32, 1), it.next());
+    try std.testing.expectEqual(@as(?i32, 4), it.next());
+    try std.testing.expectEqual(@as(?i32, 2), it.next());
+    try std.testing.expectEqual(@as(?i32, 5), it.next());
+    try std.testing.expectEqual(@as(?i32, 3), it.next());
+    try std.testing.expectEqual(@as(?i32, 6), it.next());
+    try std.testing.expectEqual(@as(?i32, null), it.next());
+}
+
+test "interleave: unequal length slices" {
+    var it = interleave(i32, &.{ &.{ 1, 2, 3 }, &.{ 4, 5 } });
+    try std.testing.expectEqual(@as(?i32, 1), it.next());
+    try std.testing.expectEqual(@as(?i32, 4), it.next());
+    try std.testing.expectEqual(@as(?i32, 2), it.next());
+    try std.testing.expectEqual(@as(?i32, 5), it.next());
+    try std.testing.expectEqual(@as(?i32, 3), it.next());
+    try std.testing.expectEqual(@as(?i32, null), it.next());
+}
+
+test "interleave: single slice" {
+    var it = interleave(i32, &.{&.{ 1, 2, 3 }});
+    try std.testing.expectEqual(@as(?i32, 1), it.next());
+    try std.testing.expectEqual(@as(?i32, 2), it.next());
+    try std.testing.expectEqual(@as(?i32, 3), it.next());
+    try std.testing.expectEqual(@as(?i32, null), it.next());
+}
+
+test "interleave: empty slices array" {
+    const empty_slices: []const []const i32 = &.{};
+    var it = interleave(i32, empty_slices);
+    try std.testing.expectEqual(@as(?i32, null), it.next());
+}
+
+test "interleave: all empty slices" {
+    var it = interleave(i32, &.{ &.{}, &.{} });
+    try std.testing.expectEqual(@as(?i32, null), it.next());
+}
+
+test "interleave: one empty one non-empty" {
+    var it = interleave(i32, &.{ &.{}, &.{ 1, 2, 3 } });
+    try std.testing.expectEqual(@as(?i32, 1), it.next());
+    try std.testing.expectEqual(@as(?i32, 2), it.next());
+    try std.testing.expectEqual(@as(?i32, 3), it.next());
+    try std.testing.expectEqual(@as(?i32, null), it.next());
+}
+
+test "interleave collect: equal length slices" {
+    var it = interleave(i32, &.{ &.{ 1, 2 }, &.{ 3, 4 } });
+    const result = try it.collect(std.testing.allocator);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 3, 2, 4 }, result);
+}
+
 // Tests: firstOr.
 
 test "firstOr: returns first element" {
@@ -3856,4 +4371,223 @@ test "maxIndex: empty" {
 
 test "maxIndex: ties return first" {
     try std.testing.expectEqual(@as(?usize, 0), maxIndex(i32, &.{ 3, 3, 3 }));
+}
+
+// Tests: sortByField.
+
+test "sortByField: sort structs by integer field" {
+    const Person = struct { name: []const u8, age: u32 };
+    var items = [_]Person{
+        .{ .name = "charlie", .age = 30 },
+        .{ .name = "alice", .age = 25 },
+        .{ .name = "bob", .age = 28 },
+    };
+    sortByField(Person, &items, .age);
+    try std.testing.expectEqual(@as(u32, 25), items[0].age);
+    try std.testing.expectEqual(@as(u32, 28), items[1].age);
+    try std.testing.expectEqual(@as(u32, 30), items[2].age);
+}
+
+test "sortByField: sort structs by float field" {
+    const Item = struct { label: u8, score: f64 };
+    var items = [_]Item{
+        .{ .label = 'c', .score = 3.5 },
+        .{ .label = 'a', .score = 1.2 },
+        .{ .label = 'b', .score = 2.7 },
+    };
+    sortByField(Item, &items, .score);
+    try std.testing.expectEqual(@as(f64, 1.2), items[0].score);
+    try std.testing.expectEqual(@as(f64, 2.7), items[1].score);
+    try std.testing.expectEqual(@as(f64, 3.5), items[2].score);
+}
+
+test "sortByField: already sorted input" {
+    const S = struct { v: i32 };
+    var items = [_]S{ .{ .v = 1 }, .{ .v = 2 }, .{ .v = 3 } };
+    sortByField(S, &items, .v);
+    try std.testing.expectEqual(@as(i32, 1), items[0].v);
+    try std.testing.expectEqual(@as(i32, 2), items[1].v);
+    try std.testing.expectEqual(@as(i32, 3), items[2].v);
+}
+
+test "sortByField: reverse sorted input" {
+    const S = struct { v: i32 };
+    var items = [_]S{ .{ .v = 3 }, .{ .v = 2 }, .{ .v = 1 } };
+    sortByField(S, &items, .v);
+    try std.testing.expectEqual(@as(i32, 1), items[0].v);
+    try std.testing.expectEqual(@as(i32, 2), items[1].v);
+    try std.testing.expectEqual(@as(i32, 3), items[2].v);
+}
+
+test "sortByField: empty slice" {
+    const S = struct { v: i32 };
+    var items = [_]S{};
+    sortByField(S, items[0..], .v);
+    try std.testing.expectEqual(@as(usize, 0), items.len);
+}
+
+test "sortByField: single element" {
+    const S = struct { v: i32 };
+    var items = [_]S{.{ .v = 42 }};
+    sortByField(S, &items, .v);
+    try std.testing.expectEqual(@as(i32, 42), items[0].v);
+}
+
+test "sortByField: stable sort (equal keys preserve order)" {
+    const S = struct { id: u32, group: u32 };
+    var items = [_]S{
+        .{ .id = 1, .group = 2 },
+        .{ .id = 2, .group = 1 },
+        .{ .id = 3, .group = 2 },
+        .{ .id = 4, .group = 1 },
+    };
+    sortByField(S, &items, .group);
+    // group=1: id=2 before id=4 (original order preserved)
+    try std.testing.expectEqual(@as(u32, 2), items[0].id);
+    try std.testing.expectEqual(@as(u32, 4), items[1].id);
+    // group=2: id=1 before id=3 (original order preserved)
+    try std.testing.expectEqual(@as(u32, 1), items[2].id);
+    try std.testing.expectEqual(@as(u32, 3), items[3].id);
+}
+
+// Tests: sortByFieldAlloc.
+
+test "sortByFieldAlloc: returns sorted copy, original unchanged" {
+    const S = struct { v: i32 };
+    const original = &[_]S{ .{ .v = 30 }, .{ .v = 10 }, .{ .v = 20 } };
+    const sorted = try sortByFieldAlloc(S, std.testing.allocator, original, .v);
+    defer std.testing.allocator.free(sorted);
+    // Sorted copy
+    try std.testing.expectEqual(@as(i32, 10), sorted[0].v);
+    try std.testing.expectEqual(@as(i32, 20), sorted[1].v);
+    try std.testing.expectEqual(@as(i32, 30), sorted[2].v);
+    // Original unchanged
+    try std.testing.expectEqual(@as(i32, 30), original[0].v);
+    try std.testing.expectEqual(@as(i32, 10), original[1].v);
+    try std.testing.expectEqual(@as(i32, 20), original[2].v);
+}
+
+test "sortByFieldAlloc: empty slice" {
+    const S = struct { v: i32 };
+    const sorted = try sortByFieldAlloc(S, std.testing.allocator, &.{}, .v);
+    defer std.testing.allocator.free(sorted);
+    try std.testing.expectEqual(@as(usize, 0), sorted.len);
+}
+
+// Tests: toSortedAlloc.
+
+test "toSortedAlloc: unsorted input" {
+    const sorted = try toSortedAlloc(i32, std.testing.allocator, &.{ 3, 1, 2 });
+    defer std.testing.allocator.free(sorted);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, sorted);
+}
+
+test "toSortedAlloc: already sorted" {
+    const sorted = try toSortedAlloc(i32, std.testing.allocator, &.{ 1, 2, 3 });
+    defer std.testing.allocator.free(sorted);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, sorted);
+}
+
+test "toSortedAlloc: reverse sorted" {
+    const sorted = try toSortedAlloc(i32, std.testing.allocator, &.{ 3, 2, 1 });
+    defer std.testing.allocator.free(sorted);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, sorted);
+}
+
+test "toSortedAlloc: empty input" {
+    const sorted = try toSortedAlloc(i32, std.testing.allocator, &.{});
+    defer std.testing.allocator.free(sorted);
+    try std.testing.expectEqual(@as(usize, 0), sorted.len);
+}
+
+test "toSortedAlloc: single element" {
+    const sorted = try toSortedAlloc(i32, std.testing.allocator, &.{42});
+    defer std.testing.allocator.free(sorted);
+    try std.testing.expectEqualSlices(i32, &.{42}, sorted);
+}
+
+test "toSortedAlloc: original unchanged" {
+    const original = [_]i32{ 3, 1, 2 };
+    const sorted = try toSortedAlloc(i32, std.testing.allocator, &original);
+    defer std.testing.allocator.free(sorted);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, sorted);
+    // Original unchanged
+    try std.testing.expectEqualSlices(i32, &.{ 3, 1, 2 }, &original);
+}
+
+// Tests: times / TimesIterator.
+
+test "times: square function, n=4" {
+    const square = struct {
+        fn f(i: usize) usize {
+            return i * i;
+        }
+    }.f;
+    var iter = times(usize, 4, square);
+    try std.testing.expectEqual(@as(?usize, 0), iter.next());
+    try std.testing.expectEqual(@as(?usize, 1), iter.next());
+    try std.testing.expectEqual(@as(?usize, 4), iter.next());
+    try std.testing.expectEqual(@as(?usize, 9), iter.next());
+    try std.testing.expectEqual(@as(?usize, null), iter.next());
+}
+
+test "times: n=0 yields nothing" {
+    const identity = struct {
+        fn f(i: usize) usize {
+            return i;
+        }
+    }.f;
+    var iter = times(usize, 0, identity);
+    try std.testing.expectEqual(@as(?usize, null), iter.next());
+}
+
+test "times: n=1 yields func(0) only" {
+    const doubler = struct {
+        fn f(i: usize) usize {
+            return i * 2;
+        }
+    }.f;
+    var iter = times(usize, 1, doubler);
+    try std.testing.expectEqual(@as(?usize, 0), iter.next());
+    try std.testing.expectEqual(@as(?usize, null), iter.next());
+}
+
+test "times: collect matches timesAlloc" {
+    const square = struct {
+        fn f(i: usize) usize {
+            return i * i;
+        }
+    }.f;
+    var iter = times(usize, 4, square);
+    const collected = try iter.collect(std.testing.allocator);
+    defer std.testing.allocator.free(collected);
+
+    const allocated = try timesAlloc(usize, std.testing.allocator, 4, square);
+    defer std.testing.allocator.free(allocated);
+
+    try std.testing.expectEqualSlices(usize, allocated, collected);
+}
+
+// Tests: timesAlloc.
+
+test "timesAlloc: square function, n=4" {
+    const square = struct {
+        fn f(i: usize) usize {
+            return i * i;
+        }
+    }.f;
+    const result = try timesAlloc(usize, std.testing.allocator, 4, square);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(usize, &.{ 0, 1, 4, 9 }, result);
+}
+
+test "timesAlloc: n=0 returns empty" {
+    const identity = struct {
+        fn f(i: usize) usize {
+            return i;
+        }
+    }.f;
+    const result = try timesAlloc(usize, std.testing.allocator, 0, identity);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
 }
