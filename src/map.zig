@@ -585,6 +585,14 @@ test "values: empty map" {
     try std.testing.expectEqual(@as(?u8, null), it.next());
 }
 
+test "valuesAlloc: empty map" {
+    var m = std.AutoHashMap(u32, u8).init(std.testing.allocator);
+    defer m.deinit();
+    const vs = try valuesAlloc(u32, u8, std.testing.allocator, &m);
+    defer std.testing.allocator.free(vs);
+    try std.testing.expectEqual(@as(usize, 0), vs.len);
+}
+
 test "valuesAlloc: collects values" {
     var m = try makeTestMap(std.testing.allocator);
     defer m.deinit();
@@ -607,6 +615,14 @@ test "entries: empty map" {
     defer m.deinit();
     var it = entries(u32, u8, &m);
     try std.testing.expectEqual(@as(?Entry(u32, u8), null), it.next());
+}
+
+test "entriesAlloc: empty map" {
+    var m = std.AutoHashMap(u32, u8).init(std.testing.allocator);
+    defer m.deinit();
+    const es = try entriesAlloc(u32, u8, std.testing.allocator, &m);
+    defer std.testing.allocator.free(es);
+    try std.testing.expectEqual(@as(usize, 0), es.len);
 }
 
 test "entriesAlloc: collects pairs" {
@@ -764,6 +780,21 @@ test "filterMap: empty map" {
     try std.testing.expectEqual(@as(usize, 0), result.count());
 }
 
+test "filterMap: single entry match" {
+    var m = std.AutoHashMap(u32, u8).init(std.testing.allocator);
+    defer m.deinit();
+    try m.put(5, 'x');
+    const always = struct {
+        fn f(_: u32, _: u8) bool {
+            return true;
+        }
+    }.f;
+    var result = try filterMap(u32, u8, std.testing.allocator, &m, always);
+    defer result.deinit();
+    try std.testing.expectEqual(@as(usize, 1), result.count());
+    try std.testing.expectEqual(@as(u8, 'x'), result.get(5).?);
+}
+
 test "filterMap: no matches" {
     var m = try makeTestMap(std.testing.allocator);
     defer m.deinit();
@@ -785,6 +816,15 @@ test "pickKeys: keeps specified keys" {
     try std.testing.expectEqual(@as(usize, 2), result.count());
     try std.testing.expectEqual(@as(u8, 'a'), result.get(1).?);
     try std.testing.expectEqual(@as(u8, 'c'), result.get(3).?);
+}
+
+test "pickKeys: single key" {
+    var m = try makeTestMap(std.testing.allocator);
+    defer m.deinit();
+    var result = try pickKeys(u32, u8, std.testing.allocator, m, &.{2});
+    defer result.deinit();
+    try std.testing.expectEqual(@as(usize, 1), result.count());
+    try std.testing.expectEqual(@as(u8, 'b'), result.get(2).?);
 }
 
 test "pickKeys: keys not in map" {
@@ -846,6 +886,20 @@ test "invert: empty map" {
     try std.testing.expectEqual(@as(usize, 0), result.count());
 }
 
+test "invert: duplicate values" {
+    var m = std.AutoHashMap(u32, u8).init(std.testing.allocator);
+    defer m.deinit();
+    try m.put(1, 'a');
+    try m.put(2, 'a');
+    try m.put(3, 'b');
+    var result = try invert(u32, u8, std.testing.allocator, &m);
+    defer result.deinit();
+    // Two keys mapped to 'a', last-write-wins: result has one entry for 'a'
+    try std.testing.expectEqual(@as(usize, 2), result.count());
+    try std.testing.expect(result.get('a') != null); // one of 1 or 2
+    try std.testing.expectEqual(@as(u32, 3), result.get('b').?);
+}
+
 test "invert: single entry" {
     var m = std.AutoHashMap(u32, u8).init(std.testing.allocator);
     defer m.deinit();
@@ -867,6 +921,21 @@ test "merge: adds entries from source" {
 
     try merge(u32, u8, &dest, &source);
     try std.testing.expectEqual(@as(usize, 3), dest.count());
+    try std.testing.expectEqual(@as(u8, 'b'), dest.get(2).?);
+}
+
+test "merge: into empty dest" {
+    var dest = std.AutoHashMap(u32, u8).init(std.testing.allocator);
+    defer dest.deinit();
+
+    var source = std.AutoHashMap(u32, u8).init(std.testing.allocator);
+    defer source.deinit();
+    try source.put(1, 'a');
+    try source.put(2, 'b');
+
+    try merge(u32, u8, &dest, &source);
+    try std.testing.expectEqual(@as(usize, 2), dest.count());
+    try std.testing.expectEqual(@as(u8, 'a'), dest.get(1).?);
     try std.testing.expectEqual(@as(u8, 'b'), dest.get(2).?);
 }
 
