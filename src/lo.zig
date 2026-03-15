@@ -140,6 +140,12 @@ pub const associate = slice.associate;
 pub const countBy = slice.countBy;
 pub const findDuplicates = slice.findDuplicates;
 pub const findUniques = slice.findUniques;
+pub const firstOr = slice.firstOr;
+pub const lastOr = slice.lastOr;
+pub const nthOr = slice.nthOr;
+pub const elementsMatch = slice.elementsMatch;
+pub const minIndex = slice.minIndex;
+pub const maxIndex = slice.maxIndex;
 
 // Re-export map.zig
 pub const Entry = hash_map.Entry;
