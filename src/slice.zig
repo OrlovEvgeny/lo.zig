@@ -1476,6 +1476,187 @@ pub fn splice(comptime T: type, allocator: Allocator, items: []const T, index: u
     return result;
 }
 
+// Map-building and deduplication.
+
+/// Generic key-value entry type for `associate`.
+///
+/// ```zig
+/// const entry = lo.AssocEntry([]const u8, u32){ .key = "alice", .value = 30 };
+/// ```
+pub fn AssocEntry(comptime K: type, comptime V: type) type {
+    return struct { key: K, value: V };
+}
+
+/// Convert a slice to a map indexed by an extracted key.
+///
+/// Given a key function, builds a hash map from keys to elements.
+/// If multiple elements produce the same key, the **last** element wins.
+///
+/// ```zig
+/// const Person = struct { name: []const u8, age: u32 };
+/// fn getAge(p: Person) u32 { return p.age; }
+/// var m = try lo.keyBy(Person, u32, allocator, &people, getAge);
+/// defer m.deinit();
+/// ```
+pub fn keyBy(
+    comptime T: type,
+    comptime K: type,
+    allocator: Allocator,
+    items: []const T,
+    key_fn: *const fn (T) K,
+) Allocator.Error!std.AutoHashMap(K, T) {
+    var result = std.AutoHashMap(K, T).init(allocator);
+    errdefer result.deinit();
+    for (items) |item| {
+        try result.put(key_fn(item), item);
+    }
+    return result;
+}
+
+/// Convert a slice to a map with custom key and value extraction.
+///
+/// The `transform` function returns an `AssocEntry(K, V)` for each element.
+/// If multiple elements produce the same key, the **last** element wins.
+///
+/// ```zig
+/// fn toEntry(p: Person) lo.AssocEntry(u32, []const u8) {
+///     return .{ .key = p.age, .value = p.name };
+/// }
+/// var m = try lo.associate(Person, u32, []const u8, allocator, &people, toEntry);
+/// defer m.deinit();
+/// ```
+pub fn associate(
+    comptime T: type,
+    comptime K: type,
+    comptime V: type,
+    allocator: Allocator,
+    items: []const T,
+    transform: *const fn (T) AssocEntry(K, V),
+) Allocator.Error!std.AutoHashMap(K, V) {
+    var result = std.AutoHashMap(K, V).init(allocator);
+    errdefer result.deinit();
+    for (items) |item| {
+        const entry = transform(item);
+        try result.put(entry.key, entry.value);
+    }
+    return result;
+}
+
+/// Count elements by a key function.
+///
+/// Applies the key function to each element and counts how many elements
+/// produce each key. Follows the `countValues` pattern with key extraction.
+///
+/// ```zig
+/// fn isEven(x: i32) bool { return @mod(x, 2) == 0; }
+/// var m = try lo.countBy(i32, bool, allocator, &.{1,2,3,4,5}, isEven);
+/// defer m.deinit();
+/// m.get(true).?;  // 2
+/// m.get(false).?; // 3
+/// ```
+pub fn countBy(
+    comptime T: type,
+    comptime K: type,
+    allocator: Allocator,
+    items: []const T,
+    key_fn: *const fn (T) K,
+) Allocator.Error!std.AutoHashMap(K, usize) {
+    var freq = std.AutoHashMap(K, usize).init(allocator);
+    errdefer freq.deinit();
+    for (items) |item| {
+        const k = key_fn(item);
+        const entry = try freq.getOrPut(k);
+        if (entry.found_existing) {
+            entry.value_ptr.* += 1;
+        } else {
+            entry.value_ptr.* = 1;
+        }
+    }
+    return freq;
+}
+
+/// Find elements appearing more than once.
+///
+/// Returns a new slice containing the first occurrence of each element
+/// that appears more than once. Preserves first-occurrence order from
+/// the original slice.
+///
+/// ```zig
+/// const dups = try lo.findDuplicates(i32, allocator, &.{1,2,2,3,3,3});
+/// defer allocator.free(dups);
+/// // dups == &.{2, 3}
+/// ```
+pub fn findDuplicates(
+    comptime T: type,
+    allocator: Allocator,
+    items: []const T,
+) Allocator.Error![]T {
+    // Pass 1: count occurrences.
+    var counts = std.AutoHashMap(T, usize).init(allocator);
+    defer counts.deinit();
+    for (items) |item| {
+        const entry = try counts.getOrPut(item);
+        if (entry.found_existing) {
+            entry.value_ptr.* += 1;
+        } else {
+            entry.value_ptr.* = 1;
+        }
+    }
+    // Pass 2: collect first occurrence of each element with count > 1.
+    var seen = std.AutoHashMap(T, void).init(allocator);
+    defer seen.deinit();
+    var list = std.ArrayList(T){};
+    errdefer list.deinit(allocator);
+    for (items) |item| {
+        const c = counts.get(item) orelse continue;
+        if (c > 1) {
+            const gop = try seen.getOrPut(item);
+            if (!gop.found_existing) {
+                try list.append(allocator, item);
+            }
+        }
+    }
+    return list.toOwnedSlice(allocator);
+}
+
+/// Find elements appearing exactly once.
+///
+/// Returns a new slice containing elements that appear exactly once
+/// in the input. Preserves first-occurrence order from the original slice.
+///
+/// ```zig
+/// const uniques = try lo.findUniques(i32, allocator, &.{1,2,2,3,3,3,4});
+/// defer allocator.free(uniques);
+/// // uniques == &.{1, 4}
+/// ```
+pub fn findUniques(
+    comptime T: type,
+    allocator: Allocator,
+    items: []const T,
+) Allocator.Error![]T {
+    // Pass 1: count occurrences.
+    var counts = std.AutoHashMap(T, usize).init(allocator);
+    defer counts.deinit();
+    for (items) |item| {
+        const entry = try counts.getOrPut(item);
+        if (entry.found_existing) {
+            entry.value_ptr.* += 1;
+        } else {
+            entry.value_ptr.* = 1;
+        }
+    }
+    // Pass 2: collect elements with count == 1 in original order.
+    var list = std.ArrayList(T){};
+    errdefer list.deinit(allocator);
+    for (items) |item| {
+        const c = counts.get(item) orelse continue;
+        if (c == 1) {
+            try list.append(allocator, item);
+        }
+    }
+    return list.toOwnedSlice(allocator);
+}
+
 // Equality helper, used throughout slice.zig.
 
 fn eql(comptime T: type, a: T, b: T) bool {
@@ -3224,4 +3405,225 @@ test "splice: empty source with elements returns copy of new_elements" {
     const result = try splice(i32, allocator, &.{}, 0, &.{ 1, 2, 3 });
     defer allocator.free(result);
     try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, result);
+}
+
+// Tests: keyBy.
+
+test "keyBy: converts slice to map indexed by key" {
+    const Person = struct { name: []const u8, age: u32 };
+    const getAge = struct {
+        fn f(p: Person) u32 {
+            return p.age;
+        }
+    }.f;
+    const people = [_]Person{
+        .{ .name = "alice", .age = 30 },
+        .{ .name = "bob", .age = 25 },
+    };
+    var m = try keyBy(Person, u32, std.testing.allocator, &people, getAge);
+    defer m.deinit();
+    try std.testing.expectEqualSlices(u8, "alice", m.get(30).?.name);
+    try std.testing.expectEqualSlices(u8, "bob", m.get(25).?.name);
+    try std.testing.expectEqual(@as(usize, 2), m.count());
+}
+
+test "keyBy: duplicate keys last wins" {
+    const Person = struct { name: []const u8, age: u32 };
+    const getAge = struct {
+        fn f(p: Person) u32 {
+            return p.age;
+        }
+    }.f;
+    const people = [_]Person{
+        .{ .name = "alice", .age = 30 },
+        .{ .name = "bob", .age = 30 },
+    };
+    var m = try keyBy(Person, u32, std.testing.allocator, &people, getAge);
+    defer m.deinit();
+    try std.testing.expectEqualSlices(u8, "bob", m.get(30).?.name);
+    try std.testing.expectEqual(@as(usize, 1), m.count());
+}
+
+test "keyBy: empty slice" {
+    const getId = struct {
+        fn f(x: i32) i32 {
+            return x;
+        }
+    }.f;
+    var m = try keyBy(i32, i32, std.testing.allocator, &.{}, getId);
+    defer m.deinit();
+    try std.testing.expectEqual(@as(usize, 0), m.count());
+}
+
+test "keyBy: single element" {
+    const getId = struct {
+        fn f(x: i32) i32 {
+            return x;
+        }
+    }.f;
+    var m = try keyBy(i32, i32, std.testing.allocator, &.{42}, getId);
+    defer m.deinit();
+    try std.testing.expectEqual(@as(usize, 1), m.count());
+    try std.testing.expectEqual(@as(i32, 42), m.get(42).?);
+}
+
+// Tests: associate.
+
+test "associate: converts slice to map with custom key+value" {
+    const Person = struct { name: []const u8, age: u32 };
+    const personToEntry = struct {
+        fn f(p: Person) AssocEntry(u32, []const u8) {
+            return .{ .key = p.age, .value = p.name };
+        }
+    }.f;
+    const people = [_]Person{
+        .{ .name = "alice", .age = 30 },
+        .{ .name = "bob", .age = 25 },
+    };
+    var m = try associate(Person, u32, []const u8, std.testing.allocator, &people, personToEntry);
+    defer m.deinit();
+    try std.testing.expectEqualSlices(u8, "alice", m.get(30).?);
+    try std.testing.expectEqualSlices(u8, "bob", m.get(25).?);
+    try std.testing.expectEqual(@as(usize, 2), m.count());
+}
+
+test "associate: duplicate keys last wins" {
+    const Person = struct { name: []const u8, age: u32 };
+    const personToEntry = struct {
+        fn f(p: Person) AssocEntry(u32, []const u8) {
+            return .{ .key = p.age, .value = p.name };
+        }
+    }.f;
+    const people = [_]Person{
+        .{ .name = "alice", .age = 30 },
+        .{ .name = "bob", .age = 30 },
+    };
+    var m = try associate(Person, u32, []const u8, std.testing.allocator, &people, personToEntry);
+    defer m.deinit();
+    try std.testing.expectEqualSlices(u8, "bob", m.get(30).?);
+    try std.testing.expectEqual(@as(usize, 1), m.count());
+}
+
+test "associate: empty slice" {
+    const toEntry = struct {
+        fn f(x: i32) AssocEntry(i32, i32) {
+            return .{ .key = x, .value = x * 10 };
+        }
+    }.f;
+    var m = try associate(i32, i32, i32, std.testing.allocator, &.{}, toEntry);
+    defer m.deinit();
+    try std.testing.expectEqual(@as(usize, 0), m.count());
+}
+
+// Tests: countBy.
+
+test "countBy: counts by predicate" {
+    const isEvenCb = struct {
+        fn f(x: i32) bool {
+            return @mod(x, 2) == 0;
+        }
+    }.f;
+    var m = try countBy(i32, bool, std.testing.allocator, &.{ 1, 2, 3, 4, 5 }, isEvenCb);
+    defer m.deinit();
+    try std.testing.expectEqual(@as(usize, 2), m.get(true).?);
+    try std.testing.expectEqual(@as(usize, 3), m.get(false).?);
+}
+
+test "countBy: all same key" {
+    const always = struct {
+        fn f(_: i32) bool {
+            return true;
+        }
+    }.f;
+    var m = try countBy(i32, bool, std.testing.allocator, &.{ 1, 2, 3 }, always);
+    defer m.deinit();
+    try std.testing.expectEqual(@as(usize, 3), m.get(true).?);
+}
+
+test "countBy: all different keys" {
+    const identity = struct {
+        fn f(x: i32) i32 {
+            return x;
+        }
+    }.f;
+    var m = try countBy(i32, i32, std.testing.allocator, &.{ 1, 2, 3 }, identity);
+    defer m.deinit();
+    try std.testing.expectEqual(@as(usize, 1), m.get(1).?);
+    try std.testing.expectEqual(@as(usize, 1), m.get(2).?);
+    try std.testing.expectEqual(@as(usize, 1), m.get(3).?);
+}
+
+test "countBy: empty slice" {
+    const identity = struct {
+        fn f(x: i32) i32 {
+            return x;
+        }
+    }.f;
+    var m = try countBy(i32, i32, std.testing.allocator, &.{}, identity);
+    defer m.deinit();
+    try std.testing.expectEqual(@as(usize, 0), m.count());
+}
+
+// Tests: findDuplicates.
+
+test "findDuplicates: returns duplicated elements" {
+    const dups = try findDuplicates(i32, std.testing.allocator, &.{ 1, 2, 2, 3, 3, 3 });
+    defer std.testing.allocator.free(dups);
+    try std.testing.expectEqualSlices(i32, &.{ 2, 3 }, dups);
+}
+
+test "findDuplicates: no duplicates" {
+    const dups = try findDuplicates(i32, std.testing.allocator, &.{ 1, 2, 3 });
+    defer std.testing.allocator.free(dups);
+    try std.testing.expectEqualSlices(i32, &.{}, dups);
+}
+
+test "findDuplicates: all same" {
+    const dups = try findDuplicates(i32, std.testing.allocator, &.{ 5, 5, 5 });
+    defer std.testing.allocator.free(dups);
+    try std.testing.expectEqualSlices(i32, &.{5}, dups);
+}
+
+test "findDuplicates: empty slice" {
+    const dups = try findDuplicates(i32, std.testing.allocator, &.{});
+    defer std.testing.allocator.free(dups);
+    try std.testing.expectEqualSlices(i32, &.{}, dups);
+}
+
+test "findDuplicates: single element" {
+    const dups = try findDuplicates(i32, std.testing.allocator, &.{42});
+    defer std.testing.allocator.free(dups);
+    try std.testing.expectEqualSlices(i32, &.{}, dups);
+}
+
+// Tests: findUniques.
+
+test "findUniques: returns unique elements" {
+    const uniques = try findUniques(i32, std.testing.allocator, &.{ 1, 2, 2, 3, 3, 3, 4 });
+    defer std.testing.allocator.free(uniques);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 4 }, uniques);
+}
+
+test "findUniques: no uniques" {
+    const uniques = try findUniques(i32, std.testing.allocator, &.{ 2, 2, 3, 3 });
+    defer std.testing.allocator.free(uniques);
+    try std.testing.expectEqualSlices(i32, &.{}, uniques);
+}
+
+test "findUniques: all unique" {
+    const uniques = try findUniques(i32, std.testing.allocator, &.{ 1, 2, 3 });
+    defer std.testing.allocator.free(uniques);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, uniques);
+}
+
+test "findUniques: empty slice" {
+    const uniques = try findUniques(i32, std.testing.allocator, &.{});
+    defer std.testing.allocator.free(uniques);
+    try std.testing.expectEqualSlices(i32, &.{}, uniques);
+}
+
+test "findUniques: single element" {
+    const uniques = try findUniques(i32, std.testing.allocator, &.{42});
+    defer std.testing.allocator.free(uniques);
+    try std.testing.expectEqualSlices(i32, &.{42}, uniques);
 }

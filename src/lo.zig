@@ -134,6 +134,12 @@ pub const sortBy = slice.sortBy;
 pub const sortByAlloc = slice.sortByAlloc;
 pub const concat = slice.concat;
 pub const splice = slice.splice;
+pub const AssocEntry = slice.AssocEntry;
+pub const keyBy = slice.keyBy;
+pub const associate = slice.associate;
+pub const countBy = slice.countBy;
+pub const findDuplicates = slice.findDuplicates;
+pub const findUniques = slice.findUniques;
 
 // Re-export map.zig
 pub const Entry = hash_map.Entry;
