@@ -1131,3 +1131,43 @@ test "replaceAll: empty needle guard" {
     defer alloc.free(result);
     try std.testing.expectEqualStrings("hello", result);
 }
+
+// -- chunkString tests --
+
+test "chunkString: basic chunking" {
+    var it = chunkString("abcdefgh", 3);
+    try std.testing.expectEqualStrings("abc", it.next().?);
+    try std.testing.expectEqualStrings("def", it.next().?);
+    try std.testing.expectEqualStrings("gh", it.next().?);
+    try std.testing.expectEqual(@as(?[]const u8, null), it.next());
+}
+
+test "chunkString: exact multiple" {
+    var it = chunkString("abc", 3);
+    try std.testing.expectEqualStrings("abc", it.next().?);
+    try std.testing.expectEqual(@as(?[]const u8, null), it.next());
+}
+
+test "chunkString: empty input" {
+    var it = chunkString("", 3);
+    try std.testing.expectEqual(@as(?[]const u8, null), it.next());
+}
+
+test "chunkString: chunk larger than input" {
+    var it = chunkString("abc", 10);
+    try std.testing.expectEqualStrings("abc", it.next().?);
+    try std.testing.expectEqual(@as(?[]const u8, null), it.next());
+}
+
+test "chunkString: zero size guard" {
+    var it = chunkString("abc", 0);
+    try std.testing.expectEqual(@as(?[]const u8, null), it.next());
+}
+
+test "chunkString: size of one" {
+    var it = chunkString("abc", 1);
+    try std.testing.expectEqualStrings("a", it.next().?);
+    try std.testing.expectEqualStrings("b", it.next().?);
+    try std.testing.expectEqualStrings("c", it.next().?);
+    try std.testing.expectEqual(@as(?[]const u8, null), it.next());
+}
