@@ -1,0 +1,708 @@
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+/// Sum all elements in a slice. Returns 0 for empty slices.
+///
+/// ```zig
+/// lo.sum(i32, &.{ 1, 2, 3, 4 }); // 10
+/// ```
+pub fn sum(comptime T: type, slice: []const T) T {
+    var acc: T = 0;
+    for (slice) |v| {
+        acc += v;
+    }
+    return acc;
+}
+
+/// Sum elements after applying a transform function.
+///
+/// ```zig
+/// const people = [_]Person{ .{ .age = 20 }, .{ .age = 30 } };
+/// lo.sumBy(Person, i32, &people, Person.getAge); // 50
+/// ```
+pub fn sumBy(
+    comptime T: type,
+    comptime R: type,
+    slice: []const T,
+    transform: *const fn (T) R,
+) R {
+    var acc: R = 0;
+    for (slice) |v| {
+        acc += transform(v);
+    }
+    return acc;
+}
+
+/// Multiply all elements in a slice. Returns 1 for empty slices.
+///
+/// ```zig
+/// lo.product(i32, &.{ 2, 3, 4 }); // 24
+/// ```
+pub fn product(comptime T: type, slice: []const T) T {
+    var acc: T = 1;
+    for (slice) |v| {
+        acc *= v;
+    }
+    return acc;
+}
+
+/// Multiply elements after applying a transform function.
+pub fn productBy(
+    comptime T: type,
+    comptime R: type,
+    slice: []const T,
+    transform: *const fn (T) R,
+) R {
+    var acc: R = 1;
+    for (slice) |v| {
+        acc *= transform(v);
+    }
+    return acc;
+}
+
+/// Arithmetic mean of a slice. Returns 0.0 for empty slices.
+///
+/// ```zig
+/// lo.mean(i32, &.{ 2, 4, 6 }); // 4.0
+/// ```
+pub fn mean(comptime T: type, slice: []const T) f64 {
+    if (slice.len == 0) return 0.0;
+    var acc: f64 = 0.0;
+    for (slice) |v| {
+        acc += toF64(T, v);
+    }
+    return acc / @as(f64, @floatFromInt(slice.len));
+}
+
+/// Arithmetic mean after applying a transform function.
+pub fn meanBy(
+    comptime T: type,
+    slice: []const T,
+    transform: *const fn (T) f64,
+) f64 {
+    if (slice.len == 0) return 0.0;
+    var acc: f64 = 0.0;
+    for (slice) |v| {
+        acc += transform(v);
+    }
+    return acc / @as(f64, @floatFromInt(slice.len));
+}
+
+/// Returns the minimum value in a slice, or null if empty.
+///
+/// ```zig
+/// lo.min(i32, &.{ 3, 1, 2 }); // 1
+/// ```
+pub fn min(comptime T: type, slice: []const T) ?T {
+    if (slice.len == 0) return null;
+    var result = slice[0];
+    for (slice[1..]) |v| {
+        if (compare(T, v, result) == .lt) result = v;
+    }
+    return result;
+}
+
+/// Returns the maximum value in a slice, or null if empty.
+///
+/// ```zig
+/// lo.max(i32, &.{ 3, 1, 2 }); // 3
+/// ```
+pub fn max(comptime T: type, slice: []const T) ?T {
+    if (slice.len == 0) return null;
+    var result = slice[0];
+    for (slice[1..]) |v| {
+        if (compare(T, v, result) == .gt) result = v;
+    }
+    return result;
+}
+
+/// Returns the minimum element according to a comparator.
+///
+/// ```zig
+/// lo.minBy(Point, &points, Point.compareByX); // point with smallest x
+/// ```
+pub fn minBy(
+    comptime T: type,
+    slice: []const T,
+    comparator: *const fn (T, T) std.math.Order,
+) ?T {
+    if (slice.len == 0) return null;
+    var result = slice[0];
+    for (slice[1..]) |v| {
+        if (comparator(v, result) == .lt) result = v;
+    }
+    return result;
+}
+
+/// Returns the maximum element according to a comparator.
+///
+/// ```zig
+/// lo.maxBy(Point, &points, Point.compareByX); // point with largest x
+/// ```
+pub fn maxBy(
+    comptime T: type,
+    slice: []const T,
+    comparator: *const fn (T, T) std.math.Order,
+) ?T {
+    if (slice.len == 0) return null;
+    var result = slice[0];
+    for (slice[1..]) |v| {
+        if (comparator(v, result) == .gt) result = v;
+    }
+    return result;
+}
+
+/// Returns both min and max in a single pass. Null if empty.
+///
+/// ```zig
+/// const mm = lo.minMax(i32, &.{ 5, 1, 9, 3 }).?;
+/// // mm.min_val == 1, mm.max_val == 9
+/// ```
+pub fn minMax(comptime T: type, slice: []const T) ?MinMax(T) {
+    if (slice.len == 0) return null;
+    var result = MinMax(T){
+        .min_val = slice[0],
+        .max_val = slice[0],
+    };
+    for (slice[1..]) |v| {
+        if (compare(T, v, result.min_val) == .lt) result.min_val = v;
+        if (compare(T, v, result.max_val) == .gt) result.max_val = v;
+    }
+    return result;
+}
+
+pub fn MinMax(comptime T: type) type {
+    return struct {
+        min_val: T,
+        max_val: T,
+    };
+}
+
+/// Clamp a value to the range [lo, hi].
+///
+/// ```zig
+/// lo.clamp(i32, 15, 0, 10); // 10
+/// lo.clamp(i32, -5, 0, 10); // 0
+/// lo.clamp(i32, 5, 0, 10);  // 5
+/// ```
+pub fn clamp(comptime T: type, value: T, lo: T, hi: T) T {
+    if (compare(T, value, lo) == .lt) return lo;
+    if (compare(T, value, hi) == .gt) return hi;
+    return value;
+}
+
+/// Allocate a slice containing integers in [start, end).
+/// Returns an empty slice when start >= end.
+///
+/// ```zig
+/// const r = try lo.rangeAlloc(i32, allocator, 0, 5);
+/// defer allocator.free(r);
+/// // r == .{ 0, 1, 2, 3, 4 }
+/// ```
+pub fn rangeAlloc(
+    comptime T: type,
+    allocator: Allocator,
+    start: T,
+    end: T,
+) Allocator.Error![]T {
+    if (start >= end) {
+        return allocator.alloc(T, 0);
+    }
+    const len: usize = @intCast(end - start);
+    const result = try allocator.alloc(T, len);
+    var v = start;
+    for (result) |*slot| {
+        slot.* = v;
+        v += 1;
+    }
+    return result;
+}
+
+/// Allocate a slice containing values from start to end (exclusive)
+/// with the given step. Returns error.InvalidArgument if step is 0.
+///
+/// ```zig
+/// const r = try lo.rangeWithStepAlloc(i32, allocator, 0, 10, 3);
+/// defer allocator.free(r);
+/// // r == .{ 0, 3, 6, 9 }
+/// ```
+pub fn rangeWithStepAlloc(
+    comptime T: type,
+    allocator: Allocator,
+    start: T,
+    end: T,
+    step: T,
+) RangeError![]T {
+    if (step == 0) return error.InvalidArgument;
+    if (start >= end) {
+        return allocator.alloc(T, 0);
+    }
+    const span: usize = @intCast(end - start);
+    const s: usize = @intCast(step);
+    const len = (span + s - 1) / s;
+    const result = try allocator.alloc(T, len);
+    var v = start;
+    for (result) |*slot| {
+        slot.* = v;
+        v += step;
+    }
+    return result;
+}
+
+pub const RangeError = Allocator.Error || error{InvalidArgument};
+
+/// Returns the most frequently occurring value in a slice.
+/// Requires allocation for an internal frequency map.
+/// Returns null for empty slices.
+///
+/// ```zig
+/// const m = try lo.mode(i32, allocator, &.{ 1, 2, 2, 3, 2 });
+/// // m == 2
+/// ```
+pub fn mode(
+    comptime T: type,
+    allocator: Allocator,
+    slice: []const T,
+) Allocator.Error!?T {
+    if (slice.len == 0) return null;
+
+    var counts = std.AutoHashMap(T, usize).init(allocator);
+    defer counts.deinit();
+
+    for (slice) |v| {
+        const entry = try counts.getOrPut(v);
+        if (entry.found_existing) {
+            entry.value_ptr.* += 1;
+        } else {
+            entry.value_ptr.* = 1;
+        }
+    }
+
+    var best: ?T = null;
+    var best_count: usize = 0;
+    var it = counts.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.* > best_count) {
+            best_count = entry.value_ptr.*;
+            best = entry.key_ptr.*;
+        }
+    }
+    return best;
+}
+
+// Comparison and conversion helpers.
+
+fn compare(comptime T: type, a: T, b: T) std.math.Order {
+    return std.math.order(a, b);
+}
+
+fn toF64(comptime T: type, value: T) f64 {
+    return switch (@typeInfo(T)) {
+        .int, .comptime_int => @floatFromInt(value),
+        .float, .comptime_float => @floatCast(value),
+        else => @compileError(
+            "toF64: unsupported type " ++ @typeName(T),
+        ),
+    };
+}
+
+// Tests
+
+test "sum: integers" {
+    try std.testing.expectEqual(@as(i32, 10), sum(i32, &.{ 1, 2, 3, 4 }));
+}
+
+test "sum: empty slice" {
+    try std.testing.expectEqual(@as(i32, 0), sum(i32, &.{}));
+}
+
+test "sum: single element" {
+    try std.testing.expectEqual(@as(i32, 7), sum(i32, &.{7}));
+}
+
+test "sum: negative values" {
+    try std.testing.expectEqual(@as(i32, -3), sum(i32, &.{ -1, -2, 0 }));
+}
+
+test "sumBy: transform then sum" {
+    const double = struct {
+        fn f(x: i32) i64 {
+            return @as(i64, x) * 2;
+        }
+    }.f;
+    try std.testing.expectEqual(
+        @as(i64, 12),
+        sumBy(i32, i64, &.{ 1, 2, 3 }, double),
+    );
+}
+
+test "sumBy: empty slice" {
+    const identity = struct {
+        fn f(x: i32) i32 {
+            return x;
+        }
+    }.f;
+    try std.testing.expectEqual(@as(i32, 0), sumBy(i32, i32, &.{}, identity));
+}
+
+test "sumBy: single element" {
+    const negate = struct {
+        fn f(x: i32) i32 {
+            return -x;
+        }
+    }.f;
+    try std.testing.expectEqual(
+        @as(i32, -5),
+        sumBy(i32, i32, &.{5}, negate),
+    );
+}
+
+test "product: integers" {
+    try std.testing.expectEqual(@as(i32, 24), product(i32, &.{ 2, 3, 4 }));
+}
+
+test "product: empty slice returns 1" {
+    try std.testing.expectEqual(@as(i32, 1), product(i32, &.{}));
+}
+
+test "product: single element" {
+    try std.testing.expectEqual(@as(i32, 7), product(i32, &.{7}));
+}
+
+test "product: contains zero" {
+    try std.testing.expectEqual(@as(i32, 0), product(i32, &.{ 1, 0, 3 }));
+}
+
+test "productBy: transform then multiply" {
+    const double = struct {
+        fn f(x: i32) i64 {
+            return @as(i64, x) * 2;
+        }
+    }.f;
+    // (2*2) * (3*2) * (4*2) = 4 * 6 * 8 = 192
+    try std.testing.expectEqual(
+        @as(i64, 192),
+        productBy(i32, i64, &.{ 2, 3, 4 }, double),
+    );
+}
+
+test "productBy: empty slice returns 1" {
+    const identity = struct {
+        fn f(x: i32) i32 {
+            return x;
+        }
+    }.f;
+    try std.testing.expectEqual(
+        @as(i32, 1),
+        productBy(i32, i32, &.{}, identity),
+    );
+}
+
+test "productBy: single element" {
+    const double = struct {
+        fn f(x: i32) i32 {
+            return x * 2;
+        }
+    }.f;
+    try std.testing.expectEqual(
+        @as(i32, 10),
+        productBy(i32, i32, &.{5}, double),
+    );
+}
+
+test "mean: integers" {
+    try std.testing.expectEqual(@as(f64, 4.0), mean(i32, &.{ 2, 4, 6 }));
+}
+
+test "mean: empty slice returns 0" {
+    try std.testing.expectEqual(@as(f64, 0.0), mean(i32, &.{}));
+}
+
+test "mean: single element" {
+    try std.testing.expectEqual(@as(f64, 5.0), mean(i32, &.{5}));
+}
+
+test "mean: floats" {
+    try std.testing.expectEqual(@as(f64, 2.5), mean(f64, &.{ 1.0, 2.0, 3.0, 4.0 }));
+}
+
+test "meanBy: transform then average" {
+    const asF64 = struct {
+        fn f(x: i32) f64 {
+            return @floatFromInt(x);
+        }
+    }.f;
+    try std.testing.expectEqual(
+        @as(f64, 2.0),
+        meanBy(i32, &.{ 1, 2, 3 }, asF64),
+    );
+}
+
+test "meanBy: empty slice returns 0" {
+    const asF64 = struct {
+        fn f(x: i32) f64 {
+            return @floatFromInt(x);
+        }
+    }.f;
+    try std.testing.expectEqual(@as(f64, 0.0), meanBy(i32, &.{}, asF64));
+}
+
+test "meanBy: single element" {
+    const doubled = struct {
+        fn f(x: i32) f64 {
+            return @as(f64, @floatFromInt(x)) * 2.0;
+        }
+    }.f;
+    try std.testing.expectEqual(@as(f64, 10.0), meanBy(i32, &.{5}, doubled));
+}
+
+test "min: finds minimum" {
+    try std.testing.expectEqual(@as(?i32, 1), min(i32, &.{ 3, 1, 2 }));
+}
+
+test "min: empty slice returns null" {
+    try std.testing.expectEqual(@as(?i32, null), min(i32, &.{}));
+}
+
+test "min: single element" {
+    try std.testing.expectEqual(@as(?i32, 42), min(i32, &.{42}));
+}
+
+test "min: negative values" {
+    try std.testing.expectEqual(@as(?i32, -10), min(i32, &.{ -1, -10, 5 }));
+}
+
+test "max: finds maximum" {
+    try std.testing.expectEqual(@as(?i32, 3), max(i32, &.{ 3, 1, 2 }));
+}
+
+test "max: empty slice returns null" {
+    try std.testing.expectEqual(@as(?i32, null), max(i32, &.{}));
+}
+
+test "max: single element" {
+    try std.testing.expectEqual(@as(?i32, 42), max(i32, &.{42}));
+}
+
+test "max: negative values" {
+    try std.testing.expectEqual(@as(?i32, 5), max(i32, &.{ -1, -10, 5 }));
+}
+
+test "minBy: custom comparator" {
+    const Point = struct { x: i32, y: i32 };
+    const byX = struct {
+        fn f(a: Point, b: Point) std.math.Order {
+            return std.math.order(a.x, b.x);
+        }
+    }.f;
+    const pts = [_]Point{
+        .{ .x = 3, .y = 0 },
+        .{ .x = 1, .y = 0 },
+        .{ .x = 2, .y = 0 },
+    };
+    const result = minBy(Point, &pts, byX).?;
+    try std.testing.expectEqual(@as(i32, 1), result.x);
+}
+
+test "minBy: empty slice returns null" {
+    const cmp = struct {
+        fn f(a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.f;
+    try std.testing.expectEqual(@as(?i32, null), minBy(i32, &.{}, cmp));
+}
+
+test "minBy: single element" {
+    const cmp = struct {
+        fn f(a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.f;
+    try std.testing.expectEqual(@as(?i32, 42), minBy(i32, &.{42}, cmp));
+}
+
+test "maxBy: custom comparator" {
+    const Point = struct { x: i32, y: i32 };
+    const byX = struct {
+        fn f(a: Point, b: Point) std.math.Order {
+            return std.math.order(a.x, b.x);
+        }
+    }.f;
+    const pts = [_]Point{
+        .{ .x = 3, .y = 0 },
+        .{ .x = 1, .y = 0 },
+        .{ .x = 2, .y = 0 },
+    };
+    const result = maxBy(Point, &pts, byX).?;
+    try std.testing.expectEqual(@as(i32, 3), result.x);
+}
+
+test "maxBy: empty slice returns null" {
+    const cmp = struct {
+        fn f(a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.f;
+    try std.testing.expectEqual(@as(?i32, null), maxBy(i32, &.{}, cmp));
+}
+
+test "maxBy: single element" {
+    const cmp = struct {
+        fn f(a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.f;
+    try std.testing.expectEqual(@as(?i32, 42), maxBy(i32, &.{42}, cmp));
+}
+
+test "minMax: finds both" {
+    const result = minMax(i32, &.{ 5, 1, 9, 3 }).?;
+    try std.testing.expectEqual(@as(i32, 1), result.min_val);
+    try std.testing.expectEqual(@as(i32, 9), result.max_val);
+}
+
+test "minMax: empty slice returns null" {
+    try std.testing.expectEqual(
+        @as(?MinMax(i32), null),
+        minMax(i32, &.{}),
+    );
+}
+
+test "minMax: single element" {
+    const result = minMax(i32, &.{42}).?;
+    try std.testing.expectEqual(@as(i32, 42), result.min_val);
+    try std.testing.expectEqual(@as(i32, 42), result.max_val);
+}
+
+test "minMax: two elements" {
+    const result = minMax(i32, &.{ 10, 3 }).?;
+    try std.testing.expectEqual(@as(i32, 3), result.min_val);
+    try std.testing.expectEqual(@as(i32, 10), result.max_val);
+}
+
+test "clamp: within range unchanged" {
+    try std.testing.expectEqual(@as(i32, 5), clamp(i32, 5, 0, 10));
+}
+
+test "clamp: below range clamped to lo" {
+    try std.testing.expectEqual(@as(i32, 0), clamp(i32, -5, 0, 10));
+}
+
+test "clamp: above range clamped to hi" {
+    try std.testing.expectEqual(@as(i32, 10), clamp(i32, 15, 0, 10));
+}
+
+test "clamp: at boundaries" {
+    try std.testing.expectEqual(@as(i32, 0), clamp(i32, 0, 0, 10));
+    try std.testing.expectEqual(@as(i32, 10), clamp(i32, 10, 0, 10));
+}
+
+test "clamp: floats" {
+    try std.testing.expectEqual(@as(f64, 0.5), clamp(f64, 0.5, 0.0, 1.0));
+    try std.testing.expectEqual(@as(f64, 0.0), clamp(f64, -1.0, 0.0, 1.0));
+    try std.testing.expectEqual(@as(f64, 1.0), clamp(f64, 2.0, 0.0, 1.0));
+}
+
+test "rangeAlloc: generates range" {
+    const r = try rangeAlloc(i32, std.testing.allocator, 0, 5);
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqualSlices(i32, &.{ 0, 1, 2, 3, 4 }, r);
+}
+
+test "rangeAlloc: start equals end returns empty" {
+    const r = try rangeAlloc(i32, std.testing.allocator, 3, 3);
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqual(@as(usize, 0), r.len);
+}
+
+test "rangeAlloc: start greater than end returns empty" {
+    const r = try rangeAlloc(i32, std.testing.allocator, 5, 2);
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqual(@as(usize, 0), r.len);
+}
+
+test "rangeAlloc: single element" {
+    const r = try rangeAlloc(i32, std.testing.allocator, 4, 5);
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqualSlices(i32, &.{4}, r);
+}
+
+test "rangeWithStepAlloc: generates with step" {
+    const r = try rangeWithStepAlloc(
+        i32,
+        std.testing.allocator,
+        0,
+        10,
+        3,
+    );
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqualSlices(i32, &.{ 0, 3, 6, 9 }, r);
+}
+
+test "rangeWithStepAlloc: step 1 same as rangeAlloc" {
+    const r = try rangeWithStepAlloc(
+        i32,
+        std.testing.allocator,
+        0,
+        5,
+        1,
+    );
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqualSlices(i32, &.{ 0, 1, 2, 3, 4 }, r);
+}
+
+test "rangeWithStepAlloc: step zero returns error" {
+    const result = rangeWithStepAlloc(i32, std.testing.allocator, 0, 5, 0);
+    try std.testing.expectError(error.InvalidArgument, result);
+}
+
+test "rangeWithStepAlloc: step larger than range" {
+    const r = try rangeWithStepAlloc(
+        i32,
+        std.testing.allocator,
+        0,
+        3,
+        10,
+    );
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqualSlices(i32, &.{0}, r);
+}
+
+test "mode: finds most frequent" {
+    const m = try mode(i32, std.testing.allocator, &.{ 1, 2, 2, 3, 2 });
+    try std.testing.expectEqual(@as(?i32, 2), m);
+}
+
+test "mode: empty slice returns null" {
+    const m = try mode(i32, std.testing.allocator, &.{});
+    try std.testing.expectEqual(@as(?i32, null), m);
+}
+
+test "mode: single element" {
+    const m = try mode(i32, std.testing.allocator, &.{42});
+    try std.testing.expectEqual(@as(?i32, 42), m);
+}
+
+test "mode: all same value" {
+    const m = try mode(i32, std.testing.allocator, &.{ 5, 5, 5 });
+    try std.testing.expectEqual(@as(?i32, 5), m);
+}
+
+test "mode: tied frequencies returns smallest value" {
+    // All values have frequency 1, smallest should win
+    const m = try mode(i32, std.testing.allocator, &.{ 1, 2, 3 });
+    try std.testing.expectEqual(@as(?i32, 1), m);
+}
+
+test "mode: tie-breaking is insertion-order independent" {
+    // Same data reversed — must return same result (1, the smallest)
+    const m = try mode(i32, std.testing.allocator, &.{ 3, 2, 1 });
+    try std.testing.expectEqual(@as(?i32, 1), m);
+}
+
+test "mode: tie-breaking with partial tie" {
+    // 5 and 3 each appear twice, 1 appears once; smallest of tied (3) wins
+    const m = try mode(i32, std.testing.allocator, &.{ 5, 5, 3, 3, 1 });
+    try std.testing.expectEqual(@as(?i32, 3), m);
+}
