@@ -1,6 +1,12 @@
 [![CI](https://github.com/OrlovEvgeny/lo.zig/actions/workflows/ci.yml/badge.svg)](https://github.com/OrlovEvgeny/lo.zig/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/OrlovEvgeny/lo.zig)](https://github.com/OrlovEvgeny/lo.zig/releases/latest)
+[![Zig](https://img.shields.io/badge/zig-0.15.0-F7A41D?logo=zig&logoColor=white)](https://ziglang.org)
 
-# lo.zig
+# lo.zig is a Lodash-style Zig library
+
+<p align="center">
+<img src="assets/logo.png" alt="lo.zig" width="900"/>
+</p>
 
 Generic utility library for Zig
 
@@ -11,13 +17,8 @@ Iterator-first: most transformations return lazy iterators.
 
 Add `lo.zig` as a dependency in your `build.zig.zon`:
 
-```zig
-.dependencies = .{
-    .lo = .{
-        .url = "https://github.com/eorlov/lo.zig/archive/<COMMIT>.tar.gz",
-        .hash = "...",
-    },
-},
+```sh
+zig fetch --save git+https://github.com/OrlovEvgeny/lo.zig
 ```
 
 Then in your `build.zig`:
@@ -42,20 +43,20 @@ const safe  = lo.unwrapOr(i32, null, 42); // 42
 
 ## Function Index
 
-- [Slice Helpers](#slice-helpers) -- first, last, nth, firstOr, lastOr, nthOr, initial, tail, drop, dropRight, dropWhile, dropRightWhile, take, takeRight, takeWhile, takeRightWhile, sample, samples
-- [Transform](#transform) -- map, mapAlloc, mapIndex, filter, filterAlloc, reject, rejectAlloc, compact, compactAlloc, flatten, flattenAlloc, flatMap, flatMapAlloc, without, forEach, forEachIndex
-- [Aggregate](#aggregate) -- reduce, reduceRight, sum, sumBy, product, productBy, mean, meanBy, min, max, minBy, maxBy, minMax, count, countBy, countValues, mode, median, variance, stddev, percentile
-- [Sort & Order](#sort--order) -- sortBy, sortByAlloc, sortByField, sortByFieldAlloc, toSortedAlloc, isSorted, equal, reverse, shuffle
-- [Set Operations](#set-operations) -- uniq, uniqBy, intersect, union\_, difference, symmetricDifference, findDuplicates, findUniques, elementsMatch
-- [Partition & Group](#partition--group) -- partition, groupBy, chunk, window, scan, scanAlloc
-- [Combine](#combine) -- concat, splice, interleave, fill, fillRange, repeat, repeatBy, times, timesAlloc
-- [Search](#search) -- find, findIndex, findLast, findLastIndex, indexOf, lastIndexOf, contains, containsBy, every, some, none, minIndex, maxIndex
-- [Map Helpers](#map-helpers) -- keys, keysAlloc, values, valuesAlloc, entries, entriesAlloc, fromEntries, mapKeys, mapValues, filterMap, filterKeys, filterValues, pickKeys, omitKeys, invert, merge, assign, mapEntries, mapToSlice, valueOr, hasKey, mapCount, keyBy, associate
-- [String Helpers](#string-helpers) -- words, wordsAlloc, camelCase, pascalCase, snakeCase, kebabCase, capitalize, lowerFirst, toLower, toUpper, trim, trimStart, trimEnd, startsWith, endsWith, includes, substr, ellipsis, strRepeat, padLeft, padRight, runeLength, randomString, split, splitAlloc, join, replace, replaceAll, chunkString
-- [Math](#math) -- sum, mean, median, variance, stddev, percentile, lerp, remap, clamp, inRange, cumSum, cumProd, rangeAlloc, rangeWithStepAlloc
-- [Tuple Helpers](#tuple-helpers) -- zip, zipAlloc, zipWith, unzip, enumerate
-- [Type Helpers](#type-helpers) -- isNull, isNotNull, unwrapOr, coalesce, empty, isEmpty, isNotEmpty, ternary, toConst
-- [Types](#types) -- Entry, Pair, MinMax, RangeError, PartitionResult, UnzipResult, AssocEntry, and iterator types
+- [Slice Helpers](#slice-helpers) - first, last, nth, firstOr, lastOr, nthOr, initial, tail, drop, dropRight, dropWhile, dropRightWhile, take, takeRight, takeWhile, takeRightWhile, sample, samples
+- [Transform](#transform) - map, mapAlloc, mapIndex, filter, filterAlloc, reject, rejectAlloc, compact, compactAlloc, flatten, flattenAlloc, flatMap, flatMapAlloc, without, forEach, forEachIndex
+- [Aggregate](#aggregate) - reduce, reduceRight, sum, sumBy, product, productBy, mean, meanBy, min, max, minBy, maxBy, minMax, count, countBy, countValues, mode, median, variance, stddev, percentile
+- [Sort & Order](#sort--order) - sortBy, sortByAlloc, sortByField, sortByFieldAlloc, toSortedAlloc, isSorted, equal, reverse, shuffle
+- [Set Operations](#set-operations) - uniq, uniqBy, intersect, union\_, difference, symmetricDifference, findDuplicates, findUniques, elementsMatch
+- [Partition & Group](#partition--group) - partition, groupBy, chunk, window, scan, scanAlloc
+- [Combine](#combine) - concat, splice, interleave, fill, fillRange, repeat, repeatBy, times, timesAlloc
+- [Search](#search) - find, findIndex, findLast, findLastIndex, indexOf, lastIndexOf, contains, containsBy, every, some, none, minIndex, maxIndex
+- [Map Helpers](#map-helpers) - keys, keysAlloc, values, valuesAlloc, entries, entriesAlloc, fromEntries, mapKeys, mapValues, filterMap, filterKeys, filterValues, pickKeys, omitKeys, invert, merge, assign, mapEntries, mapToSlice, valueOr, hasKey, mapCount, keyBy, associate
+- [String Helpers](#string-helpers) - words, wordsAlloc, camelCase, pascalCase, snakeCase, kebabCase, capitalize, lowerFirst, toLower, toUpper, trim, trimStart, trimEnd, startsWith, endsWith, includes, substr, ellipsis, strRepeat, padLeft, padRight, runeLength, randomString, split, splitAlloc, join, replace, replaceAll, chunkString
+- [Math](#math) - sum, mean, median, variance, stddev, percentile, lerp, remap, clamp, inRange, cumSum, cumProd, rangeAlloc, rangeWithStepAlloc
+- [Tuple Helpers](#tuple-helpers) - zip, zipAlloc, zipWith, unzip, enumerate
+- [Type Helpers](#type-helpers) - isNull, isNotNull, unwrapOr, coalesce, empty, isEmpty, isNotEmpty, ternary, toConst
+- [Types](#types) - Entry, Pair, MinMax, RangeError, PartitionResult, UnzipResult, AssocEntry, and iterator types
 
 ---
 
