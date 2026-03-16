@@ -1,5 +1,8 @@
 const std = @import("std");
 
+
+/// DISCLAIMER: This shit is experimental, needed in another project - with Zig monads
+
 /// Returns true if the optional value is null.
 ///
 /// ```zig
