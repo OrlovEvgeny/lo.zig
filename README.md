@@ -1,6 +1,8 @@
+[![CI](https://github.com/OrlovEvgeny/lo.zig/actions/workflows/ci.yml/badge.svg)](https://github.com/OrlovEvgeny/lo.zig/actions/workflows/ci.yml)
+
 # lo.zig
 
-Generic utility library for Zig. Inspired by [samber/lo](https://github.com/samber/lo).
+Generic utility library for Zig
 
 Zero hidden allocations: functions that need memory take an `Allocator`.
 Iterator-first: most transformations return lazy iterators.
