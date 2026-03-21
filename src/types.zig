@@ -1,8 +1,6 @@
 const std = @import("std");
 
-
 /// DISCLAIMER: This shit is experimental, needed in another project - with Zig monads
-
 /// Returns true if the optional value is null.
 ///
 /// ```zig
@@ -64,7 +62,7 @@ pub fn empty(comptime T: type) T {
         .bool => false,
         .optional => null,
         .null => null,
-        .@"enum" => @enumFromInt(0),
+        .@"enum" => @enumFromInt(@typeInfo(T).@"enum".fields[0].value),
         .@"struct" => std.mem.zeroes(T),
         .array => std.mem.zeroes(T),
         .vector => std.mem.zeroes(T),
@@ -212,6 +210,16 @@ test "empty: bool false" {
 
 test "empty: optional null" {
     try std.testing.expectEqual(@as(?i32, null), empty(?i32));
+}
+
+test "empty: enum returns first variant" {
+    const E = enum { a, b, c };
+    try std.testing.expectEqual(E.a, empty(E));
+}
+
+test "empty: enum with non-zero start returns first variant" {
+    const E = enum(u8) { x = 10, y = 20, z = 30 };
+    try std.testing.expectEqual(E.x, empty(E));
 }
 
 test "isEmpty: zero integer is empty" {

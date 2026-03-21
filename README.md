@@ -43,17 +43,17 @@ const safe  = lo.unwrapOr(i32, null, 42); // 42
 
 ## Function Index
 
-- [Slice Helpers](#slice-helpers) - first, last, nth, firstOr, lastOr, nthOr, initial, tail, drop, dropRight, dropWhile, dropRightWhile, take, takeRight, takeWhile, takeRightWhile, sample, samples
-- [Transform](#transform) - map, mapAlloc, mapIndex, filter, filterAlloc, reject, rejectAlloc, compact, compactAlloc, flatten, flattenAlloc, flatMap, flatMapAlloc, without, forEach, forEachIndex
-- [Aggregate](#aggregate) - reduce, reduceRight, sum, sumBy, product, productBy, mean, meanBy, min, max, minBy, maxBy, minMax, count, countBy, countValues, mode, median, variance, stddev, percentile
+- [Slice Helpers](#slice-helpers) - first, last, nth, firstOr, lastOr, nthOr, initial, tail, drop, dropRight, dropWhile, dropWhileAlloc, dropRightWhile, take, takeRight, takeWhile, takeWhileAlloc, takeRightWhile, sample, samples
+- [Transform](#transform) - map, mapAlloc, mapIndex, filter, filterAlloc, reject, rejectAlloc, compact, compactAlloc, flatten, flattenAlloc, flattenDeep, flatMap, flatMapAlloc, without, forEach, forEachIndex, compactMap, filterMapIter
+- [Aggregate](#aggregate) - reduce, reduceRight, sum, sumBy, product, productBy, mean, meanBy, min, max, minBy, maxBy, minMax, minMaxBy, count, countBy, countValues, mode, median, variance, stddev, sampleVariance, sampleStddev, percentile
 - [Sort & Order](#sort--order) - sortBy, sortByAlloc, sortByField, sortByFieldAlloc, toSortedAlloc, isSorted, equal, reverse, shuffle
-- [Set Operations](#set-operations) - uniq, uniqBy, intersect, union\_, difference, symmetricDifference, findDuplicates, findUniques, elementsMatch
+- [Set Operations](#set-operations) - uniq, uniqBy, intersect, union\_, difference, symmetricDifference, findDuplicates, findUniques, elementsMatch, differenceWith, intersectWith, unionWith
 - [Partition & Group](#partition--group) - partition, groupBy, chunk, window, scan, scanAlloc
 - [Combine](#combine) - concat, splice, interleave, fill, fillRange, repeat, repeatBy, times, timesAlloc
-- [Search](#search) - find, findIndex, findLast, findLastIndex, indexOf, lastIndexOf, contains, containsBy, every, some, none, minIndex, maxIndex
+- [Search](#search) - find, findIndex, findLast, findLastIndex, indexOf, lastIndexOf, contains, containsBy, every, some, none, minIndex, maxIndex, binarySearch, lowerBound, upperBound, sortedIndex, sortedLastIndex
 - [Map Helpers](#map-helpers) - keys, keysAlloc, values, valuesAlloc, entries, entriesAlloc, fromEntries, mapKeys, mapValues, filterMap, filterKeys, filterValues, pickKeys, omitKeys, invert, merge, assign, mapEntries, mapToSlice, valueOr, hasKey, mapCount, keyBy, associate
 - [String Helpers](#string-helpers) - words, wordsAlloc, camelCase, pascalCase, snakeCase, kebabCase, capitalize, lowerFirst, toLower, toUpper, trim, trimStart, trimEnd, startsWith, endsWith, includes, substr, ellipsis, strRepeat, padLeft, padRight, runeLength, randomString, split, splitAlloc, join, replace, replaceAll, chunkString
-- [Math](#math) - sum, mean, median, variance, stddev, percentile, lerp, remap, clamp, inRange, cumSum, cumProd, rangeAlloc, rangeWithStepAlloc
+- [Math](#math) - sum, mean, median, variance, stddev, sampleVariance, sampleStddev, percentile, lerp, remap, clamp, inRange, cumSum, cumProd, rangeAlloc, rangeWithStepAlloc
 - [Tuple Helpers](#tuple-helpers) - zip, zipAlloc, zipWith, unzip, enumerate
 - [Type Helpers](#type-helpers) - isNull, isNotNull, unwrapOr, coalesce, empty, isEmpty, isNotEmpty, ternary, toConst
 - [Types](#types) - Entry, Pair, MinMax, RangeError, PartitionResult, UnzipResult, AssocEntry, and iterator types
@@ -154,6 +154,16 @@ Drop leading elements while the predicate returns true.
 lo.dropWhile(i32, &.{ 1, 2, 3, 4 }, isLessThan3); // &.{ 3, 4 }
 ```
 
+### dropWhileAlloc
+
+Drop leading elements while the predicate returns true. Allocates a copy. Caller owns the returned slice.
+
+```zig
+const result = try lo.dropWhileAlloc(i32, allocator, &.{ 1, 2, 3, 4 }, isLessThan3);
+defer allocator.free(result);
+// result == &.{ 3, 4 }
+```
+
 ### dropRightWhile
 
 Drop trailing elements while the predicate returns true.
@@ -184,6 +194,16 @@ Take leading elements while the predicate returns true.
 
 ```zig
 lo.takeWhile(i32, &.{ 1, 2, 3, 4 }, isLessThan3); // &.{ 1, 2 }
+```
+
+### takeWhileAlloc
+
+Take leading elements while the predicate returns true. Allocates a copy. Caller owns the returned slice.
+
+```zig
+const result = try lo.takeWhileAlloc(i32, allocator, &.{ 1, 2, 3, 4 }, isLessThan3);
+defer allocator.free(result);
+// result == &.{ 1, 2 }
 ```
 
 ### takeRightWhile
@@ -312,12 +332,25 @@ var it = lo.flatten(i32, &data);
 
 ### flattenAlloc
 
-Flatten a slice of slices into an allocated slice. Caller owns the returned slice.
+Flatten a slice of slices into an allocated slice. Counts total elements first, then allocates once. Caller owns the returned slice.
 
 ```zig
-const data = [_][]const i32{ &.{ 1, 2 }, &.{ 3, 4 } };
+const data = [_][]const i32{ &.{ 1, 2 }, &.{ 3, 4, 5 } };
 const result = try lo.flattenAlloc(i32, allocator, &data);
 defer allocator.free(result);
+// result == &.{ 1, 2, 3, 4, 5 }
+```
+
+### flattenDeep
+
+Flatten two levels of nesting (`[][][]T` to `[]T`). Caller owns the returned slice.
+
+```zig
+const inner = [_][]const i32{ &.{ 1, 2 }, &.{ 3 } };
+const outer = [_][]const []const i32{ &inner };
+const result = try lo.flattenDeep(i32, allocator, &outer);
+defer allocator.free(result);
+// result == &.{ 1, 2, 3 }
 ```
 
 ### flatMap
@@ -360,6 +393,33 @@ Invoke a function on each element with its index.
 
 ```zig
 lo.forEachIndex(i32, &.{ 10, 20 }, printWithIndex);
+```
+
+### compactMap
+
+Filter and map in a single pass. The transform returns `?R`; non-null values are collected into an allocated slice. Caller owns the returned slice.
+
+```zig
+const toEvenDoubled = struct {
+    fn f(x: i32) ?i32 {
+        if (@mod(x, 2) == 0) return x * 2;
+        return null;
+    }
+}.f;
+const result = try lo.compactMap(i32, i32, allocator, &.{ 1, 2, 3, 4 }, toEvenDoubled);
+defer allocator.free(result);
+// result == &.{ 4, 8 }
+```
+
+### filterMapIter
+
+Filter and map in a single step. Returns a lazy iterator.
+
+```zig
+var it = lo.filterMapIter(i32, i32, &.{ 1, 2, 3, 4 }, toEvenDoubled);
+it.next(); // 4
+it.next(); // 8
+it.next(); // null
 ```
 
 ---
@@ -416,10 +476,10 @@ lo.productBy(i32, i64, &.{ 2, 3, 4 }, double); // 192
 
 ### mean
 
-Arithmetic mean of a slice. Returns 0.0 for empty slices.
+Arithmetic mean of a slice. Returns null for empty slices.
 
 ```zig
-lo.mean(i32, &.{ 2, 4, 6 }); // 4.0
+lo.mean(i32, &.{ 2, 4, 6 }).?; // 4.0
 ```
 
 ### meanBy
@@ -428,7 +488,7 @@ Arithmetic mean after applying a transform function.
 
 ```zig
 const asF64 = struct { fn f(x: i32) f64 { return @floatFromInt(x); } }.f;
-lo.meanBy(i32, &vals, asF64); // 20.0
+lo.meanBy(i32, &vals, asF64).?; // 20.0
 ```
 
 ### min
@@ -470,6 +530,18 @@ Returns both min and max in a single pass. Null if empty.
 ```zig
 const mm = lo.minMax(i32, &.{ 5, 1, 9, 3 }).?;
 // mm.min_val == 1, mm.max_val == 9
+```
+
+### minMaxBy
+
+Returns both min and max in a single pass according to a custom comparator. Null if empty.
+
+```zig
+const byX = struct { fn f(a: Point, b: Point) std.math.Order {
+    return std.math.order(a.x, b.x);
+} }.f;
+const mm = lo.minMaxBy(Point, &points, byX).?;
+// mm.min_val and mm.max_val
 ```
 
 ### count
@@ -533,6 +605,22 @@ Standard deviation (sqrt of population variance). Returns null for empty slices.
 
 ```zig
 lo.stddev(i32, &.{ 2, 4, 4, 4, 5, 5, 7, 9 }); // 2.0
+```
+
+### sampleVariance
+
+Sample variance with N-1 denominator (Bessel's correction). Returns null for slices with fewer than 2 elements.
+
+```zig
+lo.sampleVariance(i32, &.{ 2, 4, 4, 4, 5, 5, 7, 9 }); // ~4.571
+```
+
+### sampleStddev
+
+Sample standard deviation (sqrt of sample variance). Returns null for slices with fewer than 2 elements.
+
+```zig
+lo.sampleStddev(i32, &.{ 2, 4, 4, 4, 5, 5, 7, 9 }); // ~2.138
 ```
 
 ### percentile
@@ -727,6 +815,37 @@ True if two slices contain the same elements with the same multiplicities, regar
 ```zig
 try lo.elementsMatch(i32, allocator, &.{ 1, 2, 3 }, &.{ 3, 2, 1 }); // true
 try lo.elementsMatch(i32, allocator, &.{ 1, 1, 2 }, &.{ 1, 2, 2 }); // false
+```
+
+### differenceWith
+
+Elements in the first slice but not in the second, using a custom equality predicate.
+
+```zig
+const absEq = struct { fn f(a: i32, b: i32) bool { return @abs(a) == @abs(b); } }.f;
+const d = try lo.differenceWith(i32, allocator, &.{ 1, 2, 3 }, &.{ -2, 4 }, absEq);
+defer allocator.free(d);
+// d == &.{ 1, 3 }
+```
+
+### intersectWith
+
+Elements present in both slices, using a custom equality predicate.
+
+```zig
+const i = try lo.intersectWith(i32, allocator, &.{ 1, -2, 3 }, &.{ 2, 4 }, absEq);
+defer allocator.free(i);
+// i == &.{ -2 }
+```
+
+### unionWith
+
+Unique elements from both slices combined, using a custom equality predicate.
+
+```zig
+const u = try lo.unionWith(i32, allocator, &.{ 1, 2 }, &.{ -2, 3 }, absEq);
+defer allocator.free(u);
+// u == &.{ 1, 2, 3 }
 ```
 
 ---
@@ -1005,6 +1124,51 @@ Returns the index of the maximum element, or null if empty. First occurrence on 
 lo.maxIndex(i32, &.{ 3, 1, 4, 1, 5 }); // 4
 ```
 
+### binarySearch
+
+Binary search for a target in a sorted ascending slice. Returns the index or null. O(log n).
+
+```zig
+lo.binarySearch(i32, &.{ 1, 3, 5, 7, 9 }, 5); // Some(2)
+lo.binarySearch(i32, &.{ 1, 3, 5, 7, 9 }, 4); // null
+```
+
+### lowerBound
+
+Index of the first element >= target in a sorted slice. Returns `slice.len` if all are less.
+
+```zig
+lo.lowerBound(i32, &.{ 1, 3, 5, 7 }, 4); // 2
+lo.lowerBound(i32, &.{ 1, 3, 5, 7 }, 5); // 2
+lo.lowerBound(i32, &.{ 1, 3, 5, 7 }, 9); // 4
+```
+
+### upperBound
+
+Index of the first element > target in a sorted slice. Returns `slice.len` if all are <= target.
+
+```zig
+lo.upperBound(i32, &.{ 1, 3, 5, 7 }, 3); // 2
+lo.upperBound(i32, &.{ 1, 3, 5, 7 }, 4); // 2
+lo.upperBound(i32, &.{ 1, 3, 5, 7 }, 9); // 4
+```
+
+### sortedIndex
+
+Insertion index to maintain sorted order. Equivalent to `lowerBound`.
+
+```zig
+lo.sortedIndex(i32, &.{ 1, 3, 5, 7 }, 4); // 2
+```
+
+### sortedLastIndex
+
+Insertion index after the last occurrence of a value. Equivalent to `upperBound`.
+
+```zig
+lo.sortedLastIndex(i32, &.{ 1, 3, 3, 5 }, 3); // 3
+```
+
 ---
 
 ## Map Helpers
@@ -1123,7 +1287,7 @@ defer result.deinit();
 Keep only entries with the specified keys. Caller owns the returned map.
 
 ```zig
-var result = try lo.pickKeys(u32, u8, allocator, m, &.{ 1, 3 });
+var result = try lo.pickKeys(u32, u8, allocator, &m, &.{ 1, 3 });
 defer result.deinit();
 ```
 
@@ -1185,7 +1349,7 @@ defer allocator.free(result);
 Get a value from the map, or return a default if the key is absent.
 
 ```zig
-lo.valueOr(u32, u8, my_map, 999, 0); // 0 if 999 not in map
+lo.valueOr(u32, u8, &my_map, 999, 0); // 0 if 999 not in map
 ```
 
 ### hasKey
@@ -1193,7 +1357,7 @@ lo.valueOr(u32, u8, my_map, 999, 0); // 0 if 999 not in map
 True if the map contains the given key.
 
 ```zig
-lo.hasKey(u32, u8, m, 1); // true
+lo.hasKey(u32, u8, &m, 1); // true
 ```
 
 ### mapCount
@@ -1201,7 +1365,7 @@ lo.hasKey(u32, u8, m, 1); // true
 Number of entries in the map.
 
 ```zig
-lo.mapCount(u32, u8, m); // 3
+lo.mapCount(u32, u8, &m); // 3
 ```
 
 ### keyBy
@@ -1517,10 +1681,10 @@ lo.sum(i32, &.{ 1, 2, 3, 4 }); // 10
 
 ### mean
 
-Arithmetic mean. Returns 0.0 for empty slices.
+Arithmetic mean. Returns null for empty slices.
 
 ```zig
-lo.mean(i32, &.{ 2, 4, 6 }); // 4.0
+lo.mean(i32, &.{ 2, 4, 6 }).?; // 4.0
 ```
 
 ### median
@@ -1546,6 +1710,22 @@ Standard deviation (sqrt of population variance). Null for empty slices.
 
 ```zig
 lo.stddev(i32, &.{ 2, 4, 4, 4, 5, 5, 7, 9 }); // 2.0
+```
+
+### sampleVariance
+
+Sample variance with N-1 denominator (Bessel's correction). Null for slices with fewer than 2 elements.
+
+```zig
+lo.sampleVariance(i32, &.{ 2, 4, 4, 4, 5, 5, 7, 9 }); // ~4.571
+```
+
+### sampleStddev
+
+Sample standard deviation (sqrt of sample variance). Null for slices with fewer than 2 elements.
+
+```zig
+lo.sampleStddev(i32, &.{ 2, 4, 4, 4, 5, 5, 7, 9 }); // ~2.138
 ```
 
 ### percentile
@@ -1828,6 +2008,7 @@ The following iterator types are returned by their corresponding functions. They
 | `FlatMapIterator` | `flatMap()` |
 | `CompactIterator` | `compact()` |
 | `ChunkIterator` | `chunk()` |
+| `FilterMapIterator` | `filterMapIter()` |
 | `WithoutIterator` | `without()` |
 | `ScanIterator` | `scan()` |
 | `WindowIterator` | `window()` |

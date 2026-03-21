@@ -270,14 +270,14 @@ pub fn filterMap(
 /// Caller owns the returned map.
 ///
 /// ```zig
-/// var result = try lo.pickKeys(u32, u8, allocator, m, &.{ 1, 3 });
+/// var result = try lo.pickKeys(u32, u8, allocator, &m, &.{ 1, 3 });
 /// defer result.deinit();
 /// ```
 pub fn pickKeys(
     comptime K: type,
     comptime V: type,
     allocator: Allocator,
-    hash_map: std.AutoHashMap(K, V),
+    hash_map: *const std.AutoHashMap(K, V),
     pick: []const K,
 ) Allocator.Error!std.AutoHashMap(K, V) {
     var result = std.AutoHashMap(K, V).init(allocator);
@@ -361,12 +361,12 @@ pub fn merge(
 /// Get a value from the map, or return a default if the key is absent.
 ///
 /// ```zig
-/// lo.valueOr(u32, u8, my_map, 999, 0); // 0 if 999 not in map
+/// lo.valueOr(u32, u8, &my_map, 999, 0); // 0 if 999 not in map
 /// ```
 pub fn valueOr(
     comptime K: type,
     comptime V: type,
-    hash_map: std.AutoHashMap(K, V),
+    hash_map: *const std.AutoHashMap(K, V),
     key: K,
     default: V,
 ) V {
@@ -376,12 +376,12 @@ pub fn valueOr(
 /// True if the map contains the given key.
 ///
 /// ```zig
-/// lo.hasKey(u32, u8, m, 1); // true
+/// lo.hasKey(u32, u8, &m, 1); // true
 /// ```
 pub fn hasKey(
     comptime K: type,
     comptime V: type,
-    hash_map: std.AutoHashMap(K, V),
+    hash_map: *const std.AutoHashMap(K, V),
     key: K,
 ) bool {
     return hash_map.contains(key);
@@ -390,12 +390,12 @@ pub fn hasKey(
 /// Number of entries in the map.
 ///
 /// ```zig
-/// lo.mapCount(u32, u8, m); // 3
+/// lo.mapCount(u32, u8, &m); // 3
 /// ```
 pub fn mapCount(
     comptime K: type,
     comptime V: type,
-    hash_map: std.AutoHashMap(K, V),
+    hash_map: *const std.AutoHashMap(K, V),
 ) usize {
     return hash_map.count();
 }
@@ -811,7 +811,7 @@ test "filterMap: no matches" {
 test "pickKeys: keeps specified keys" {
     var m = try makeTestMap(std.testing.allocator);
     defer m.deinit();
-    var result = try pickKeys(u32, u8, std.testing.allocator, m, &.{ 1, 3 });
+    var result = try pickKeys(u32, u8, std.testing.allocator, &m, &.{ 1, 3 });
     defer result.deinit();
     try std.testing.expectEqual(@as(usize, 2), result.count());
     try std.testing.expectEqual(@as(u8, 'a'), result.get(1).?);
@@ -821,7 +821,7 @@ test "pickKeys: keeps specified keys" {
 test "pickKeys: single key" {
     var m = try makeTestMap(std.testing.allocator);
     defer m.deinit();
-    var result = try pickKeys(u32, u8, std.testing.allocator, m, &.{2});
+    var result = try pickKeys(u32, u8, std.testing.allocator, &m, &.{2});
     defer result.deinit();
     try std.testing.expectEqual(@as(usize, 1), result.count());
     try std.testing.expectEqual(@as(u8, 'b'), result.get(2).?);
@@ -830,7 +830,7 @@ test "pickKeys: single key" {
 test "pickKeys: keys not in map" {
     var m = try makeTestMap(std.testing.allocator);
     defer m.deinit();
-    var result = try pickKeys(u32, u8, std.testing.allocator, m, &.{ 99, 100 });
+    var result = try pickKeys(u32, u8, std.testing.allocator, &m, &.{ 99, 100 });
     defer result.deinit();
     try std.testing.expectEqual(@as(usize, 0), result.count());
 }
@@ -838,7 +838,7 @@ test "pickKeys: keys not in map" {
 test "pickKeys: empty pick list" {
     var m = try makeTestMap(std.testing.allocator);
     defer m.deinit();
-    var result = try pickKeys(u32, u8, std.testing.allocator, m, &.{});
+    var result = try pickKeys(u32, u8, std.testing.allocator, &m, &.{});
     defer result.deinit();
     try std.testing.expectEqual(@as(usize, 0), result.count());
 }
@@ -967,56 +967,56 @@ test "merge: empty source" {
 test "valueOr: returns value when key exists" {
     var m = try makeTestMap(std.testing.allocator);
     defer m.deinit();
-    try std.testing.expectEqual(@as(u8, 'a'), valueOr(u32, u8, m, 1, 'z'));
+    try std.testing.expectEqual(@as(u8, 'a'), valueOr(u32, u8, &m, 1, 'z'));
 }
 
 test "valueOr: returns default when key absent" {
     var m = try makeTestMap(std.testing.allocator);
     defer m.deinit();
-    try std.testing.expectEqual(@as(u8, 'z'), valueOr(u32, u8, m, 99, 'z'));
+    try std.testing.expectEqual(@as(u8, 'z'), valueOr(u32, u8, &m, 99, 'z'));
 }
 
 test "valueOr: empty map returns default" {
     var m = std.AutoHashMap(u32, u8).init(std.testing.allocator);
     defer m.deinit();
-    try std.testing.expectEqual(@as(u8, 'x'), valueOr(u32, u8, m, 1, 'x'));
+    try std.testing.expectEqual(@as(u8, 'x'), valueOr(u32, u8, &m, 1, 'x'));
 }
 
 test "hasKey: key exists" {
     var m = try makeTestMap(std.testing.allocator);
     defer m.deinit();
-    try std.testing.expect(hasKey(u32, u8, m, 1));
+    try std.testing.expect(hasKey(u32, u8, &m, 1));
 }
 
 test "hasKey: key absent" {
     var m = try makeTestMap(std.testing.allocator);
     defer m.deinit();
-    try std.testing.expect(!hasKey(u32, u8, m, 99));
+    try std.testing.expect(!hasKey(u32, u8, &m, 99));
 }
 
 test "hasKey: empty map" {
     var m = std.AutoHashMap(u32, u8).init(std.testing.allocator);
     defer m.deinit();
-    try std.testing.expect(!hasKey(u32, u8, m, 1));
+    try std.testing.expect(!hasKey(u32, u8, &m, 1));
 }
 
 test "mapCount: returns entry count" {
     var m = try makeTestMap(std.testing.allocator);
     defer m.deinit();
-    try std.testing.expectEqual(@as(usize, 3), mapCount(u32, u8, m));
+    try std.testing.expectEqual(@as(usize, 3), mapCount(u32, u8, &m));
 }
 
 test "mapCount: empty map" {
     var m = std.AutoHashMap(u32, u8).init(std.testing.allocator);
     defer m.deinit();
-    try std.testing.expectEqual(@as(usize, 0), mapCount(u32, u8, m));
+    try std.testing.expectEqual(@as(usize, 0), mapCount(u32, u8, &m));
 }
 
 test "mapCount: single entry" {
     var m = std.AutoHashMap(u32, u8).init(std.testing.allocator);
     defer m.deinit();
     try m.put(1, 'a');
-    try std.testing.expectEqual(@as(usize, 1), mapCount(u32, u8, m));
+    try std.testing.expectEqual(@as(usize, 1), mapCount(u32, u8, &m));
 }
 
 // ── mapEntries tests ──────────────────────────────────────────────────

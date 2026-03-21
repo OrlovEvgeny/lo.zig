@@ -55,6 +55,9 @@ pub const lerp = math.lerp;
 pub const remap = math.remap;
 pub const cumSum = math.cumSum;
 pub const cumProd = math.cumProd;
+pub const minMaxBy = math.minMaxBy;
+pub const sampleVariance = math.sampleVariance;
+pub const sampleStddev = math.sampleStddev;
 
 // Re-export slice.zig
 pub const first = slice.first;
@@ -73,7 +76,9 @@ pub const dropRightWhile = slice.dropRightWhile;
 pub const take = slice.take;
 pub const takeRight = slice.takeRight;
 pub const takeWhile = slice.takeWhile;
+pub const takeWhileAlloc = slice.takeWhileAlloc;
 pub const takeRightWhile = slice.takeRightWhile;
+pub const dropWhileAlloc = slice.dropWhileAlloc;
 pub const initial = slice.initial;
 pub const tail = slice.tail;
 pub const find = slice.find;
@@ -103,6 +108,7 @@ pub const rejectAlloc = slice.rejectAlloc;
 pub const FlattenIterator = slice.FlattenIterator;
 pub const flatten = slice.flatten;
 pub const flattenAlloc = slice.flattenAlloc;
+pub const flattenDeep = slice.flattenDeep;
 pub const FlatMapIterator = slice.FlatMapIterator;
 pub const flatMap = slice.flatMap;
 pub const flatMapAlloc = slice.flatMapAlloc;
@@ -159,6 +165,18 @@ pub const TimesIterator = slice.TimesIterator;
 pub const times = slice.times;
 pub const timesAlloc = slice.timesAlloc;
 pub const toSortedAlloc = slice.toSortedAlloc;
+pub const binarySearch = slice.binarySearch;
+pub const binarySearchBy = slice.binarySearchBy;
+pub const lowerBound = slice.lowerBound;
+pub const upperBound = slice.upperBound;
+pub const sortedIndex = slice.sortedIndex;
+pub const sortedLastIndex = slice.sortedLastIndex;
+pub const differenceWith = slice.differenceWith;
+pub const intersectWith = slice.intersectWith;
+pub const unionWith = slice.unionWith;
+pub const compactMap = slice.compactMap;
+pub const FilterMapIterator = slice.FilterMapIterator;
+pub const filterMapIter = slice.filterMapIter;
 
 // Re-export map.zig
 pub const Entry = hash_map.Entry;
