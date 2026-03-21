@@ -66,13 +66,13 @@ pub fn productBy(
     return acc;
 }
 
-/// Arithmetic mean of a slice. Returns 0.0 for empty slices.
+/// Arithmetic mean of a slice. Returns null for empty slices.
 ///
 /// ```zig
-/// lo.mean(i32, &.{ 2, 4, 6 }); // 4.0
+/// lo.mean(i32, &.{ 2, 4, 6 }).?; // 4.0
 /// ```
-pub fn mean(comptime T: type, slice: []const T) f64 {
-    if (slice.len == 0) return 0.0;
+pub fn mean(comptime T: type, slice: []const T) ?f64 {
+    if (slice.len == 0) return null;
     var acc: f64 = 0.0;
     for (slice) |v| {
         acc += toF64(T, v);
@@ -81,18 +81,19 @@ pub fn mean(comptime T: type, slice: []const T) f64 {
 }
 
 /// Arithmetic mean after applying a transform function.
+/// Returns null for empty slices.
 ///
 /// ```zig
 /// const vals = [_]i32{ 10, 20, 30 };
 /// const asF64 = struct { fn f(x: i32) f64 { return @floatFromInt(x); } }.f;
-/// lo.meanBy(i32, &vals, asF64); // 20.0
+/// lo.meanBy(i32, &vals, asF64).?; // 20.0
 /// ```
 pub fn meanBy(
     comptime T: type,
     slice: []const T,
     transform: *const fn (T) f64,
-) f64 {
-    if (slice.len == 0) return 0.0;
+) ?f64 {
+    if (slice.len == 0) return null;
     var acc: f64 = 0.0;
     for (slice) |v| {
         acc += transform(v);
@@ -191,6 +192,30 @@ pub fn MinMax(comptime T: type) type {
     };
 }
 
+/// Returns both min and max in a single pass according to a custom comparator.
+/// Null if empty.
+///
+/// ```zig
+/// const mm = lo.minMaxBy(Point, &points, compareByX).?;
+/// // mm.min_val, mm.max_val
+/// ```
+pub fn minMaxBy(
+    comptime T: type,
+    slice: []const T,
+    comparator: *const fn (T, T) std.math.Order,
+) ?MinMax(T) {
+    if (slice.len == 0) return null;
+    var result = MinMax(T){
+        .min_val = slice[0],
+        .max_val = slice[0],
+    };
+    for (slice[1..]) |v| {
+        if (comparator(v, result.min_val) == .lt) result.min_val = v;
+        if (comparator(v, result.max_val) == .gt) result.max_val = v;
+    }
+    return result;
+}
+
 /// Clamp a value to the range [lo, hi].
 ///
 /// ```zig
@@ -233,11 +258,16 @@ pub fn rangeAlloc(
 
 /// Allocate a slice containing values from start to end (exclusive)
 /// with the given step. Returns error.InvalidArgument if step is 0.
+/// Supports negative steps for descending ranges.
 ///
 /// ```zig
 /// const r = try lo.rangeWithStepAlloc(i32, allocator, 0, 10, 3);
 /// defer allocator.free(r);
 /// // r == .{ 0, 3, 6, 9 }
+///
+/// const desc = try lo.rangeWithStepAlloc(i32, allocator, 10, 0, -2);
+/// defer allocator.free(desc);
+/// // desc == .{ 10, 8, 6, 4, 2 }
 /// ```
 pub fn rangeWithStepAlloc(
     comptime T: type,
@@ -247,19 +277,31 @@ pub fn rangeWithStepAlloc(
     step: T,
 ) RangeError![]T {
     if (step == 0) return error.InvalidArgument;
-    if (start >= end) {
-        return allocator.alloc(T, 0);
+    if (step > 0) {
+        if (start >= end) return allocator.alloc(T, 0);
+        const span: usize = @intCast(end - start);
+        const s: usize = @intCast(step);
+        const len = (span + s - 1) / s;
+        const result = try allocator.alloc(T, len);
+        var v = start;
+        for (result) |*slot| {
+            slot.* = v;
+            v += step;
+        }
+        return result;
+    } else {
+        if (start <= end) return allocator.alloc(T, 0);
+        const span: usize = @intCast(start - end);
+        const s: usize = @intCast(-step);
+        const len = (span + s - 1) / s;
+        const result = try allocator.alloc(T, len);
+        var v = start;
+        for (result) |*slot| {
+            slot.* = v;
+            v += step;
+        }
+        return result;
     }
-    const span: usize = @intCast(end - start);
-    const s: usize = @intCast(step);
-    const len = (span + s - 1) / s;
-    const result = try allocator.alloc(T, len);
-    var v = start;
-    for (result) |*slot| {
-        slot.* = v;
-        v += step;
-    }
-    return result;
 }
 
 /// Error set for `rangeWithStepAlloc`. Includes `InvalidArgument` for zero step.
@@ -301,7 +343,7 @@ pub fn mode(
         const key = entry.key_ptr.*;
         if (count_val > best_count or
             (count_val == best_count and (best == null or
-            std.math.order(key, best.?) == .lt)))
+                std.math.order(key, best.?) == .lt)))
         {
             best_count = count_val;
             best = key;
@@ -376,7 +418,7 @@ pub fn percentile(comptime T: type, allocator: Allocator, slice: []const T, p: f
 pub fn variance(comptime T: type, slice: []const T) ?f64 {
     if (slice.len == 0) return null;
 
-    const m = mean(T, slice);
+    const m = mean(T, slice).?;
     var acc: f64 = 0.0;
     for (slice) |v| {
         const diff = toF64(T, v) - m;
@@ -393,6 +435,35 @@ pub fn variance(comptime T: type, slice: []const T) ?f64 {
 /// ```
 pub fn stddev(comptime T: type, slice: []const T) ?f64 {
     const v = variance(T, slice) orelse return null;
+    return @sqrt(v);
+}
+
+/// Sample variance of a numeric slice (N-1 denominator, Bessel's correction).
+/// Returns null for slices with fewer than 2 elements.
+///
+/// ```zig
+/// lo.sampleVariance(i32, &.{ 2, 4, 4, 4, 5, 5, 7, 9 }); // ~4.571
+/// ```
+pub fn sampleVariance(comptime T: type, slice: []const T) ?f64 {
+    if (slice.len < 2) return null;
+
+    const m = mean(T, slice).?;
+    var acc: f64 = 0.0;
+    for (slice) |v| {
+        const diff = toF64(T, v) - m;
+        acc += diff * diff;
+    }
+    return acc / @as(f64, @floatFromInt(slice.len - 1));
+}
+
+/// Sample standard deviation (sqrt of sample variance with N-1 denominator).
+/// Returns null for slices with fewer than 2 elements.
+///
+/// ```zig
+/// lo.sampleStddev(i32, &.{ 2, 4, 4, 4, 5, 5, 7, 9 }); // ~2.138
+/// ```
+pub fn sampleStddev(comptime T: type, slice: []const T) ?f64 {
+    const v = sampleVariance(T, slice) orelse return null;
     return @sqrt(v);
 }
 
@@ -602,19 +673,19 @@ test "productBy: single element" {
 }
 
 test "mean: integers" {
-    try std.testing.expectEqual(@as(f64, 4.0), mean(i32, &.{ 2, 4, 6 }));
+    try std.testing.expectEqual(@as(f64, 4.0), mean(i32, &.{ 2, 4, 6 }).?);
 }
 
-test "mean: empty slice returns 0" {
-    try std.testing.expectEqual(@as(f64, 0.0), mean(i32, &.{}));
+test "mean: empty slice returns null" {
+    try std.testing.expectEqual(@as(?f64, null), mean(i32, &.{}));
 }
 
 test "mean: single element" {
-    try std.testing.expectEqual(@as(f64, 5.0), mean(i32, &.{5}));
+    try std.testing.expectEqual(@as(f64, 5.0), mean(i32, &.{5}).?);
 }
 
 test "mean: floats" {
-    try std.testing.expectEqual(@as(f64, 2.5), mean(f64, &.{ 1.0, 2.0, 3.0, 4.0 }));
+    try std.testing.expectEqual(@as(f64, 2.5), mean(f64, &.{ 1.0, 2.0, 3.0, 4.0 }).?);
 }
 
 test "meanBy: transform then average" {
@@ -625,17 +696,17 @@ test "meanBy: transform then average" {
     }.f;
     try std.testing.expectEqual(
         @as(f64, 2.0),
-        meanBy(i32, &.{ 1, 2, 3 }, asF64),
+        meanBy(i32, &.{ 1, 2, 3 }, asF64).?,
     );
 }
 
-test "meanBy: empty slice returns 0" {
+test "meanBy: empty slice returns null" {
     const asF64 = struct {
         fn f(x: i32) f64 {
             return @floatFromInt(x);
         }
     }.f;
-    try std.testing.expectEqual(@as(f64, 0.0), meanBy(i32, &.{}, asF64));
+    try std.testing.expectEqual(@as(?f64, null), meanBy(i32, &.{}, asF64));
 }
 
 test "meanBy: single element" {
@@ -644,7 +715,7 @@ test "meanBy: single element" {
             return @as(f64, @floatFromInt(x)) * 2.0;
         }
     }.f;
-    try std.testing.expectEqual(@as(f64, 10.0), meanBy(i32, &.{5}, doubled));
+    try std.testing.expectEqual(@as(f64, 10.0), meanBy(i32, &.{5}, doubled).?);
 }
 
 test "min: finds minimum" {
@@ -772,6 +843,43 @@ test "minMax: two elements" {
     try std.testing.expectEqual(@as(i32, 10), result.max_val);
 }
 
+test "minMaxBy: custom comparator" {
+    const Point = struct { x: i32, y: i32 };
+    const byX = struct {
+        fn f(a: Point, b: Point) std.math.Order {
+            return std.math.order(a.x, b.x);
+        }
+    }.f;
+    const pts = [_]Point{
+        .{ .x = 3, .y = 0 },
+        .{ .x = 1, .y = 0 },
+        .{ .x = 2, .y = 0 },
+    };
+    const result = minMaxBy(Point, &pts, byX).?;
+    try std.testing.expectEqual(@as(i32, 1), result.min_val.x);
+    try std.testing.expectEqual(@as(i32, 3), result.max_val.x);
+}
+
+test "minMaxBy: empty returns null" {
+    const cmp = struct {
+        fn f(a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.f;
+    try std.testing.expectEqual(@as(?MinMax(i32), null), minMaxBy(i32, &.{}, cmp));
+}
+
+test "minMaxBy: single element" {
+    const cmp = struct {
+        fn f(a: i32, b: i32) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.f;
+    const result = minMaxBy(i32, &.{42}, cmp).?;
+    try std.testing.expectEqual(@as(i32, 42), result.min_val);
+    try std.testing.expectEqual(@as(i32, 42), result.max_val);
+}
+
 test "clamp: within range unchanged" {
     try std.testing.expectEqual(@as(i32, 5), clamp(i32, 5, 0, 10));
 }
@@ -858,6 +966,42 @@ test "rangeWithStepAlloc: step larger than range" {
     );
     defer std.testing.allocator.free(r);
     try std.testing.expectEqualSlices(i32, &.{0}, r);
+}
+
+test "rangeWithStepAlloc: negative step descending" {
+    const r = try rangeWithStepAlloc(
+        i32,
+        std.testing.allocator,
+        10,
+        0,
+        -2,
+    );
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqualSlices(i32, &.{ 10, 8, 6, 4, 2 }, r);
+}
+
+test "rangeWithStepAlloc: negative step -1" {
+    const r = try rangeWithStepAlloc(
+        i32,
+        std.testing.allocator,
+        5,
+        2,
+        -1,
+    );
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqualSlices(i32, &.{ 5, 4, 3 }, r);
+}
+
+test "rangeWithStepAlloc: negative step start <= end returns empty" {
+    const r = try rangeWithStepAlloc(
+        i32,
+        std.testing.allocator,
+        0,
+        5,
+        -1,
+    );
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqual(@as(usize, 0), r.len);
 }
 
 test "mode: finds most frequent" {
@@ -1032,6 +1176,61 @@ test "stddev: is sqrt of variance" {
     const data = [_]i32{ 1, 3, 5, 7, 9 };
     const v = variance(i32, &data).?;
     const s = stddev(i32, &data).?;
+    try std.testing.expectApproxEqAbs(@sqrt(v), s, 1e-10);
+}
+
+// sampleVariance tests
+
+test "sampleVariance: empty slice returns null" {
+    const result = sampleVariance(i32, &.{});
+    try std.testing.expectEqual(@as(?f64, null), result);
+}
+
+test "sampleVariance: single element returns null" {
+    const result = sampleVariance(i32, &.{5});
+    try std.testing.expectEqual(@as(?f64, null), result);
+}
+
+test "sampleVariance: two elements" {
+    // {1, 3}: mean=2, sum_sq_diff = 1+1 = 2, sample_var = 2/1 = 2.0
+    const result = sampleVariance(i32, &.{ 1, 3 }).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), result, 1e-10);
+}
+
+test "sampleVariance: known value" {
+    // {2,4,4,4,5,5,7,9}: mean=5, sum_sq_diff=32, sample_var = 32/7 ≈ 4.571429
+    const result = sampleVariance(i32, &.{ 2, 4, 4, 4, 5, 5, 7, 9 }).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 32.0 / 7.0), result, 1e-10);
+}
+
+test "sampleVariance: all same returns 0.0" {
+    const result = sampleVariance(i32, &.{ 7, 7 }).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), result, 1e-10);
+}
+
+test "sampleVariance: greater than population variance" {
+    const data = [_]i32{ 1, 2, 3, 4, 5 };
+    const pop = variance(i32, &data).?;
+    const sample = sampleVariance(i32, &data).?;
+    try std.testing.expect(sample > pop);
+}
+
+// sampleStddev tests
+
+test "sampleStddev: empty slice returns null" {
+    const result = sampleStddev(i32, &.{});
+    try std.testing.expectEqual(@as(?f64, null), result);
+}
+
+test "sampleStddev: single element returns null" {
+    const result = sampleStddev(i32, &.{5});
+    try std.testing.expectEqual(@as(?f64, null), result);
+}
+
+test "sampleStddev: is sqrt of sample variance" {
+    const data = [_]i32{ 2, 4, 4, 4, 5, 5, 7, 9 };
+    const v = sampleVariance(i32, &data).?;
+    const s = sampleStddev(i32, &data).?;
     try std.testing.expectApproxEqAbs(@sqrt(v), s, 1e-10);
 }
 

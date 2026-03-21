@@ -251,6 +251,42 @@ pub fn takeRightWhile(
     return slice[len..];
 }
 
+/// Take leading elements while the predicate returns true. Allocates a copy.
+/// Caller owns the returned slice.
+///
+/// ```zig
+/// const result = try lo.takeWhileAlloc(i32, allocator, &.{1,2,3,4}, isLt3);
+/// defer allocator.free(result);
+/// // result == &.{ 1, 2 }
+/// ```
+pub fn takeWhileAlloc(
+    comptime T: type,
+    allocator: Allocator,
+    slice: []const T,
+    predicate: *const fn (T) bool,
+) Allocator.Error![]T {
+    const sub = takeWhile(T, slice, predicate);
+    return allocator.dupe(T, sub);
+}
+
+/// Drop leading elements while the predicate returns true. Allocates a copy.
+/// Caller owns the returned slice.
+///
+/// ```zig
+/// const result = try lo.dropWhileAlloc(i32, allocator, &.{1,2,3,4}, isLt3);
+/// defer allocator.free(result);
+/// // result == &.{ 3, 4 }
+/// ```
+pub fn dropWhileAlloc(
+    comptime T: type,
+    allocator: Allocator,
+    slice: []const T,
+    predicate: *const fn (T) bool,
+) Allocator.Error![]T {
+    const sub = dropWhile(T, slice, predicate);
+    return allocator.dupe(T, sub);
+}
+
 /// All elements except the last. Empty slice if input is empty.
 ///
 /// ```zig
@@ -661,6 +697,7 @@ pub fn filter(
 }
 
 /// Keep elements matching the predicate, collected into an allocated slice.
+/// Two-pass: pre-counts matches, allocates once, then fills.
 /// Caller owns the returned slice.
 ///
 /// ```zig
@@ -673,8 +710,19 @@ pub fn filterAlloc(
     slice: []const T,
     predicate: *const fn (T) bool,
 ) Allocator.Error![]T {
-    var it = filter(T, slice, predicate);
-    return it.collect(allocator);
+    var match_count: usize = 0;
+    for (slice) |item| {
+        if (predicate(item)) match_count += 1;
+    }
+    const result = try allocator.alloc(T, match_count);
+    var idx: usize = 0;
+    for (slice) |item| {
+        if (predicate(item)) {
+            result[idx] = item;
+            idx += 1;
+        }
+    }
+    return result;
 }
 
 /// Lazy iterator that skips elements matching a predicate.
@@ -723,6 +771,7 @@ pub fn reject(
 }
 
 /// Remove elements matching the predicate, collected into an allocated slice.
+/// Two-pass: pre-counts non-matches, allocates once, then fills.
 /// Caller owns the returned slice.
 ///
 /// ```zig
@@ -735,8 +784,19 @@ pub fn rejectAlloc(
     slice: []const T,
     predicate: *const fn (T) bool,
 ) Allocator.Error![]T {
-    var it = reject(T, slice, predicate);
-    return it.collect(allocator);
+    var keep_count: usize = 0;
+    for (slice) |item| {
+        if (!predicate(item)) keep_count += 1;
+    }
+    const result = try allocator.alloc(T, keep_count);
+    var idx: usize = 0;
+    for (slice) |item| {
+        if (!predicate(item)) {
+            result[idx] = item;
+            idx += 1;
+        }
+    }
+    return result;
 }
 
 /// Lazy iterator that flattens nested slices.
@@ -789,6 +849,7 @@ pub fn flatten(
 }
 
 /// Flatten a slice of slices into an allocated slice.
+/// Counts total elements first, then allocates once.
 /// Caller owns the returned slice.
 ///
 /// ```zig
@@ -801,8 +862,44 @@ pub fn flattenAlloc(
     allocator: Allocator,
     slices: []const []const T,
 ) Allocator.Error![]T {
-    var it = flatten(T, slices);
-    return it.collect(allocator);
+    var total: usize = 0;
+    for (slices) |s| total += s.len;
+    const result = try allocator.alloc(T, total);
+    var offset: usize = 0;
+    for (slices) |s| {
+        @memcpy(result[offset..][0..s.len], s);
+        offset += s.len;
+    }
+    return result;
+}
+
+/// Flatten two levels of nesting: `[][][]T` → allocated `[]T`.
+///
+/// ```zig
+/// const inner = [_][]const i32{ &.{1,2}, &.{3} };
+/// const outer = [_][]const []const i32{ &inner };
+/// const result = try lo.flattenDeep(i32, allocator, &outer);
+/// defer allocator.free(result);
+/// // result == &.{1, 2, 3}
+/// ```
+pub fn flattenDeep(
+    comptime T: type,
+    allocator: Allocator,
+    outer: []const []const []const T,
+) Allocator.Error![]T {
+    var total: usize = 0;
+    for (outer) |mid| {
+        for (mid) |inner| total += inner.len;
+    }
+    const result = try allocator.alloc(T, total);
+    var offset: usize = 0;
+    for (outer) |mid| {
+        for (mid) |inner| {
+            @memcpy(result[offset..][0..inner.len], inner);
+            offset += inner.len;
+        }
+    }
+    return result;
 }
 
 /// Lazy iterator that maps and flattens.
@@ -962,6 +1059,7 @@ pub fn ChunkIterator(comptime T: type) type {
         const Self = @This();
 
         pub fn next(self: *Self) ?[]const T {
+            if (self.size == 0) return null;
             if (self.index >= self.slice.len) return null;
             const end = @min(self.index + self.size, self.slice.len);
             const result = self.slice[self.index..end];
@@ -1176,6 +1274,7 @@ pub fn partition(
 // Set operations.
 
 /// Elements present in both slices. Order follows the first slice.
+/// Result is bounded by a.len; uses a single allocation + shrink.
 ///
 /// ```zig
 /// const i = try lo.intersect(i32, allocator, &.{1,2,3}, &.{2,3,4});
@@ -1193,14 +1292,16 @@ pub fn intersect(
     for (b) |item| {
         try set.put(item, {});
     }
-    var list = std.ArrayList(T){};
-    errdefer list.deinit(allocator);
+    var buf = try allocator.alloc(T, a.len);
+    errdefer allocator.free(buf);
+    var out: usize = 0;
     for (a) |item| {
         if (set.contains(item)) {
-            try list.append(allocator, item);
+            buf[out] = item;
+            out += 1;
         }
     }
-    return list.toOwnedSlice(allocator);
+    return allocator.realloc(buf, out);
 }
 
 /// Unique elements from both slices combined.
@@ -1236,6 +1337,7 @@ pub fn union_(
 }
 
 /// Elements in the first slice but not in the second.
+/// Result is bounded by a.len; uses a single allocation + shrink.
 ///
 /// ```zig
 /// const d = try lo.difference(i32, allocator, &.{1,2,3}, &.{2,4});
@@ -1250,17 +1352,17 @@ pub fn difference(
 ) Allocator.Error![]T {
     var set = std.AutoHashMap(T, void).init(allocator);
     defer set.deinit();
-    for (b) |item| {
-        try set.put(item, {});
-    }
-    var list = std.ArrayList(T){};
-    errdefer list.deinit(allocator);
+    for (b) |item| try set.put(item, {});
+    var buf = try allocator.alloc(T, a.len);
+    errdefer allocator.free(buf);
+    var out: usize = 0;
     for (a) |item| {
         if (!set.contains(item)) {
-            try list.append(allocator, item);
+            buf[out] = item;
+            out += 1;
         }
     }
-    return list.toOwnedSlice(allocator);
+    return allocator.realloc(buf, out);
 }
 
 /// Elements in either slice but not in both.
@@ -1461,7 +1563,7 @@ pub fn sortBy(comptime T: type, comptime K: type, items: []T, key_fn: *const fn 
     const ctx = Context{ .key = key_fn };
     std.sort.block(T, items, ctx, struct {
         fn lessThan(c: Context, a: T, b: T) bool {
-            return std.math.order(c.key(a), c.key(b)) == .lt;
+            return c.key(a) < c.key(b);
         }
     }.lessThan);
 }
@@ -1503,7 +1605,7 @@ pub fn sortByField(comptime T: type, items: []T, comptime field: std.meta.FieldE
     const field_name = @tagName(field);
     std.sort.block(T, items, {}, struct {
         fn lessThan(_: void, a: T, b: T) bool {
-            return std.math.order(@field(a, field_name), @field(b, field_name)) == .lt;
+            return @field(a, field_name) < @field(b, field_name);
         }
     }.lessThan);
 }
@@ -1648,7 +1750,7 @@ pub fn splice(comptime T: type, allocator: Allocator, items: []const T, index: u
     const result = try allocator.alloc(T, items.len + new_elements.len);
     @memcpy(result[0..idx], items[0..idx]);
     @memcpy(result[idx..][0..new_elements.len], new_elements);
-    @memcpy(result[idx + new_elements.len ..][0..items.len - idx], items[idx..]);
+    @memcpy(result[idx + new_elements.len ..][0 .. items.len - idx], items[idx..]);
     return result;
 }
 
@@ -1767,29 +1869,17 @@ pub fn findDuplicates(
     allocator: Allocator,
     items: []const T,
 ) Allocator.Error![]T {
-    // Pass 1: count occurrences.
-    var counts = std.AutoHashMap(T, usize).init(allocator);
-    defer counts.deinit();
-    for (items) |item| {
-        const entry = try counts.getOrPut(item);
-        if (entry.found_existing) {
-            entry.value_ptr.* += 1;
-        } else {
-            entry.value_ptr.* = 1;
-        }
-    }
-    // Pass 2: collect first occurrence of each element with count > 1.
-    var seen = std.AutoHashMap(T, void).init(allocator);
-    defer seen.deinit();
+    var state = std.AutoHashMap(T, u8).init(allocator);
+    defer state.deinit();
     var list = std.ArrayList(T){};
     errdefer list.deinit(allocator);
     for (items) |item| {
-        const c = counts.get(item) orelse continue;
-        if (c > 1) {
-            const gop = try seen.getOrPut(item);
-            if (!gop.found_existing) {
-                try list.append(allocator, item);
-            }
+        const gop = try state.getOrPut(item);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = 0;
+        } else if (gop.value_ptr.* == 0) {
+            gop.value_ptr.* = 1;
+            try list.append(allocator, item);
         }
     }
     return list.toOwnedSlice(allocator);
@@ -1810,24 +1900,21 @@ pub fn findUniques(
     allocator: Allocator,
     items: []const T,
 ) Allocator.Error![]T {
-    // Pass 1: count occurrences.
-    var counts = std.AutoHashMap(T, usize).init(allocator);
-    defer counts.deinit();
+    var state = std.AutoHashMap(T, u8).init(allocator);
+    defer state.deinit();
     for (items) |item| {
-        const entry = try counts.getOrPut(item);
-        if (entry.found_existing) {
-            entry.value_ptr.* += 1;
+        const gop = try state.getOrPut(item);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = 0;
         } else {
-            entry.value_ptr.* = 1;
+            gop.value_ptr.* = 1;
         }
     }
-    // Pass 2: collect elements with count == 1 in original order.
     var list = std.ArrayList(T){};
     errdefer list.deinit(allocator);
     for (items) |item| {
-        const c = counts.get(item) orelse continue;
-        if (c == 1) {
-            try list.append(allocator, item);
+        if (state.get(item)) |v| {
+            if (v == 0) try list.append(allocator, item);
         }
     }
     return list.toOwnedSlice(allocator);
@@ -1986,19 +2073,18 @@ pub fn window(
 pub fn InterleaveIterator(comptime T: type) type {
     return struct {
         slices: []const []const T,
+        max_len: usize,
         cursor: usize = 0,
 
         const Self = @This();
 
         pub fn next(self: *Self) ?T {
             if (self.slices.len == 0) return null;
-            var max_len: usize = 0;
-            for (self.slices) |s| max_len = @max(max_len, s.len);
 
             while (true) {
                 const round = self.cursor / self.slices.len;
                 const slot = self.cursor % self.slices.len;
-                if (round >= max_len) return null;
+                if (round >= self.max_len) return null;
                 self.cursor += 1;
                 if (round < self.slices[slot].len) {
                     return self.slices[slot][round];
@@ -2027,7 +2113,9 @@ pub fn interleave(
     comptime T: type,
     slices: []const []const T,
 ) InterleaveIterator(T) {
-    return .{ .slices = slices };
+    var max_len: usize = 0;
+    for (slices) |s| max_len = @max(max_len, s.len);
+    return .{ .slices = slices, .max_len = max_len };
 }
 
 // Access with defaults.
@@ -2144,6 +2232,273 @@ pub fn maxIndex(comptime T: type, slice_: []const T) ?usize {
 
 fn eql(comptime T: type, a: T, b: T) bool {
     return std.meta.eql(a, b);
+}
+
+// Binary search.
+
+/// Binary search for `target` in a sorted slice using natural ordering.
+/// Returns the index of the target, or null if not found.
+/// The slice must be sorted in ascending order.
+///
+/// ```zig
+/// lo.binarySearch(i32, &.{ 1, 3, 5, 7, 9 }, 5); // Some(2)
+/// lo.binarySearch(i32, &.{ 1, 3, 5, 7, 9 }, 4); // null
+/// ```
+pub fn binarySearch(comptime T: type, slice: []const T, target: T) ?usize {
+    return binarySearchBy(T, slice, target, struct {
+        fn cmp(a: T, b: T) std.math.Order {
+            return std.math.order(a, b);
+        }
+    }.cmp);
+}
+
+/// Binary search with a custom comparator. Returns the index of the target, or null.
+/// The slice must be sorted according to the comparator.
+///
+/// ```zig
+/// lo.binarySearchBy(Person, &people, target, Person.compareByName);
+/// ```
+pub fn binarySearchBy(
+    comptime T: type,
+    slice: []const T,
+    target: T,
+    comparator: *const fn (T, T) std.math.Order,
+) ?usize {
+    var lo_idx: usize = 0;
+    var hi_idx: usize = slice.len;
+    while (lo_idx < hi_idx) {
+        const mid = lo_idx + (hi_idx - lo_idx) / 2;
+        switch (comparator(slice[mid], target)) {
+            .eq => return mid,
+            .lt => lo_idx = mid + 1,
+            .gt => hi_idx = mid,
+        }
+    }
+    return null;
+}
+
+/// Returns the index of the first element >= `target` in a sorted slice.
+/// Returns `slice.len` if all elements are less than `target`.
+///
+/// ```zig
+/// lo.lowerBound(i32, &.{ 1, 3, 5, 7 }, 4); // 2
+/// lo.lowerBound(i32, &.{ 1, 3, 5, 7 }, 5); // 2
+/// lo.lowerBound(i32, &.{ 1, 3, 5, 7 }, 0); // 0
+/// lo.lowerBound(i32, &.{ 1, 3, 5, 7 }, 9); // 4
+/// ```
+pub fn lowerBound(comptime T: type, slice: []const T, target: T) usize {
+    var lo_idx: usize = 0;
+    var hi_idx: usize = slice.len;
+    while (lo_idx < hi_idx) {
+        const mid = lo_idx + (hi_idx - lo_idx) / 2;
+        if (std.math.order(slice[mid], target) == .lt) {
+            lo_idx = mid + 1;
+        } else {
+            hi_idx = mid;
+        }
+    }
+    return lo_idx;
+}
+
+/// Returns the index of the first element > `target` in a sorted slice.
+/// Returns `slice.len` if all elements are <= `target`.
+///
+/// ```zig
+/// lo.upperBound(i32, &.{ 1, 3, 5, 7 }, 3); // 2
+/// lo.upperBound(i32, &.{ 1, 3, 5, 7 }, 4); // 2
+/// lo.upperBound(i32, &.{ 1, 3, 5, 7 }, 0); // 0
+/// lo.upperBound(i32, &.{ 1, 3, 5, 7 }, 9); // 4
+/// ```
+pub fn upperBound(comptime T: type, slice: []const T, target: T) usize {
+    var lo_idx: usize = 0;
+    var hi_idx: usize = slice.len;
+    while (lo_idx < hi_idx) {
+        const mid = lo_idx + (hi_idx - lo_idx) / 2;
+        if (std.math.order(slice[mid], target) != .gt) {
+            lo_idx = mid + 1;
+        } else {
+            hi_idx = mid;
+        }
+    }
+    return lo_idx;
+}
+
+/// Returns the index where `value` should be inserted into a sorted slice
+/// to maintain order. Equivalent to `lowerBound`.
+///
+/// ```zig
+/// lo.sortedIndex(i32, &.{ 1, 3, 5, 7 }, 4); // 2
+/// lo.sortedIndex(i32, &.{ 1, 3, 5, 7 }, 5); // 2
+/// ```
+pub fn sortedIndex(comptime T: type, slice: []const T, value: T) usize {
+    return lowerBound(T, slice, value);
+}
+
+/// Returns the index after the last occurrence of `value` in a sorted slice.
+/// This is the insertion point that would go *after* existing copies of `value`.
+/// Equivalent to `upperBound`.
+///
+/// ```zig
+/// lo.sortedLastIndex(i32, &.{ 1, 3, 3, 5 }, 3); // 3
+/// lo.sortedLastIndex(i32, &.{ 1, 3, 5, 7 }, 4); // 2
+/// ```
+pub fn sortedLastIndex(comptime T: type, slice: []const T, value: T) usize {
+    return upperBound(T, slice, value);
+}
+
+// Set operations with custom equality.
+
+/// Elements in the first slice but not in the second, using a custom equality predicate.
+///
+/// ```zig
+/// const d = try lo.differenceWith(i32, allocator, &.{1, 2, 3}, &.{2, 4}, eq);
+/// defer allocator.free(d);
+/// // d == &.{1, 3}
+/// ```
+pub fn differenceWith(
+    comptime T: type,
+    allocator: Allocator,
+    a: []const T,
+    b: []const T,
+    predicate: *const fn (T, T) bool,
+) Allocator.Error![]T {
+    var list = std.ArrayList(T){};
+    errdefer list.deinit(allocator);
+    outer: for (a) |item| {
+        for (b) |ex| {
+            if (predicate(item, ex)) continue :outer;
+        }
+        try list.append(allocator, item);
+    }
+    return list.toOwnedSlice(allocator);
+}
+
+/// Elements present in both slices, using a custom equality predicate.
+///
+/// ```zig
+/// const i = try lo.intersectWith(i32, allocator, &.{1, 2, 3}, &.{2, 4}, eq);
+/// defer allocator.free(i);
+/// // i == &.{2}
+/// ```
+pub fn intersectWith(
+    comptime T: type,
+    allocator: Allocator,
+    a: []const T,
+    b: []const T,
+    predicate: *const fn (T, T) bool,
+) Allocator.Error![]T {
+    var list = std.ArrayList(T){};
+    errdefer list.deinit(allocator);
+    for (a) |item| {
+        for (b) |candidate| {
+            if (predicate(item, candidate)) {
+                try list.append(allocator, item);
+                break;
+            }
+        }
+    }
+    return list.toOwnedSlice(allocator);
+}
+
+/// Unique elements from both slices combined, using a custom equality predicate.
+///
+/// ```zig
+/// const u = try lo.unionWith(i32, allocator, &.{1, 2}, &.{2, 3}, eq);
+/// defer allocator.free(u);
+/// // u == &.{1, 2, 3}
+/// ```
+pub fn unionWith(
+    comptime T: type,
+    allocator: Allocator,
+    a: []const T,
+    b: []const T,
+    predicate: *const fn (T, T) bool,
+) Allocator.Error![]T {
+    var list = std.ArrayList(T){};
+    errdefer list.deinit(allocator);
+    for (a) |item| try list.append(allocator, item);
+    for (b) |item| {
+        var found = false;
+        for (list.items) |existing| {
+            if (predicate(item, existing)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) try list.append(allocator, item);
+    }
+    return list.toOwnedSlice(allocator);
+}
+
+/// Filter and map in a single pass. Applies `transform` to each element;
+/// if it returns a non-null value, that value is included in the result.
+/// The known output size is the input size, so a single allocation suffices.
+/// Caller owns the returned slice.
+///
+/// ```zig
+/// const result = try lo.compactMap(i32, u8, allocator, &.{1, 2, 3}, toCharIfSmall);
+/// defer allocator.free(result);
+/// ```
+pub fn compactMap(
+    comptime T: type,
+    comptime R: type,
+    allocator: Allocator,
+    slice: []const T,
+    transform: *const fn (T) ?R,
+) Allocator.Error![]R {
+    var list = std.ArrayList(R){};
+    errdefer list.deinit(allocator);
+    for (slice) |item| {
+        if (transform(item)) |val| {
+            try list.append(allocator, val);
+        }
+    }
+    return list.toOwnedSlice(allocator);
+}
+
+/// Lazy iterator that filters and maps in a single step.
+/// Returned by `filterMap()`. See `filterMap()` for usage examples.
+pub fn FilterMapIterator(comptime T: type, comptime R: type) type {
+    return struct {
+        slice: []const T,
+        transform: *const fn (T) ?R,
+        index: usize = 0,
+
+        const Self = @This();
+
+        pub fn next(self: *Self) ?R {
+            while (self.index < self.slice.len) {
+                const item = self.slice[self.index];
+                self.index += 1;
+                if (self.transform(item)) |val| return val;
+            }
+            return null;
+        }
+
+        pub fn collect(self: *Self, allocator: Allocator) Allocator.Error![]R {
+            var list = std.ArrayList(R){};
+            errdefer list.deinit(allocator);
+            while (self.next()) |item| {
+                try list.append(allocator, item);
+            }
+            return list.toOwnedSlice(allocator);
+        }
+    };
+}
+
+/// Filter and map in a single step. Returns a lazy iterator.
+///
+/// ```zig
+/// var it = lo.filterMap(i32, u8, &.{ 1, 2, 3 }, toCharIfSmall);
+/// it.next(); // filtered+mapped value
+/// ```
+pub fn filterMapIter(
+    comptime T: type,
+    comptime R: type,
+    slice: []const T,
+    transform: *const fn (T) ?R,
+) FilterMapIterator(T, R) {
+    return .{ .slice = slice, .transform = transform };
 }
 
 // Tests: Element access.
@@ -2421,6 +2776,28 @@ test "dropWhile: none match returns whole slice" {
     try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, result);
 }
 
+test "dropWhileAlloc: allocates result" {
+    const lessThan3 = struct {
+        fn f(x: i32) bool {
+            return x < 3;
+        }
+    }.f;
+    const result = try dropWhileAlloc(i32, std.testing.allocator, &.{ 1, 2, 3, 4 }, lessThan3);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 3, 4 }, result);
+}
+
+test "dropWhileAlloc: empty input" {
+    const always = struct {
+        fn f(_: i32) bool {
+            return true;
+        }
+    }.f;
+    const result = try dropWhileAlloc(i32, std.testing.allocator, &.{}, always);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
 test "dropRightWhile: drops from right" {
     const gt2 = struct {
         fn f(x: i32) bool {
@@ -2508,6 +2885,28 @@ test "takeWhile: none match returns empty" {
         }
     }.f;
     const result = takeWhile(i32, &.{ 1, 2, 3 }, never);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+test "takeWhileAlloc: allocates result" {
+    const lessThan3 = struct {
+        fn f(x: i32) bool {
+            return x < 3;
+        }
+    }.f;
+    const result = try takeWhileAlloc(i32, std.testing.allocator, &.{ 1, 2, 3, 4 }, lessThan3);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2 }, result);
+}
+
+test "takeWhileAlloc: empty input" {
+    const always = struct {
+        fn f(_: i32) bool {
+            return true;
+        }
+    }.f;
+    const result = try takeWhileAlloc(i32, std.testing.allocator, &.{}, always);
+    defer std.testing.allocator.free(result);
     try std.testing.expectEqual(@as(usize, 0), result.len);
 }
 
@@ -3079,6 +3478,56 @@ test "flattenAlloc: allocated result" {
     try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3, 4 }, result);
 }
 
+test "flattenAlloc: different length slices" {
+    const a = [_]i32{ 1, 2 };
+    const b = [_]i32{ 3, 4, 5 };
+    const slices = [_][]const i32{ &a, &b };
+    const result = try flattenAlloc(i32, std.testing.allocator, &slices);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3, 4, 5 }, result);
+}
+
+test "flattenAlloc: empty input" {
+    const slices = [_][]const i32{};
+    const result = try flattenAlloc(i32, std.testing.allocator, &slices);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+test "flattenAlloc: mixed empty and non-empty" {
+    const a = [_]i32{1};
+    const b = [_]i32{};
+    const c = [_]i32{ 2, 3 };
+    const slices = [_][]const i32{ &a, &b, &c };
+    const result = try flattenAlloc(i32, std.testing.allocator, &slices);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, result);
+}
+
+test "flattenDeep: two levels of nesting" {
+    const inner1 = [_][]const i32{ &.{ 1, 2 }, &.{3} };
+    const inner2 = [_][]const i32{&.{ 4, 5, 6 }};
+    const outer = [_][]const []const i32{ &inner1, &inner2 };
+    const result = try flattenDeep(i32, std.testing.allocator, &outer);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3, 4, 5, 6 }, result);
+}
+
+test "flattenDeep: single inner" {
+    const inner = [_][]const i32{&.{ 10, 20 }};
+    const outer = [_][]const []const i32{&inner};
+    const result = try flattenDeep(i32, std.testing.allocator, &outer);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 10, 20 }, result);
+}
+
+test "flattenDeep: empty outer" {
+    const outer = [_][]const []const i32{};
+    const result = try flattenDeep(i32, std.testing.allocator, &outer);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
 test "flatMap: map then flatten" {
     // Map each i32 to a pair of itself repeated
     const Pairs = struct {
@@ -3170,6 +3619,11 @@ test "chunk: empty slice" {
 test "chunk: size larger than slice" {
     var it = chunk(i32, &.{ 1, 2 }, 10);
     try std.testing.expectEqualSlices(i32, &.{ 1, 2 }, it.next().?);
+    try std.testing.expectEqual(@as(?[]const i32, null), it.next());
+}
+
+test "chunk: zero size returns null" {
+    var it = chunk(i32, &.{ 1, 2, 3 }, 0);
     try std.testing.expectEqual(@as(?[]const i32, null), it.next());
 }
 
@@ -4640,4 +5094,276 @@ test "timesAlloc: n=0 returns empty" {
     const result = try timesAlloc(usize, std.testing.allocator, 0, identity);
     defer std.testing.allocator.free(result);
     try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+// Tests: Binary search.
+
+test "binarySearch: finds existing element" {
+    try std.testing.expectEqual(@as(?usize, 2), binarySearch(i32, &.{ 1, 3, 5, 7, 9 }, 5));
+}
+
+test "binarySearch: returns null for missing element" {
+    try std.testing.expectEqual(@as(?usize, null), binarySearch(i32, &.{ 1, 3, 5, 7, 9 }, 4));
+}
+
+test "binarySearch: first element" {
+    try std.testing.expectEqual(@as(?usize, 0), binarySearch(i32, &.{ 1, 3, 5 }, 1));
+}
+
+test "binarySearch: last element" {
+    try std.testing.expectEqual(@as(?usize, 2), binarySearch(i32, &.{ 1, 3, 5 }, 5));
+}
+
+test "binarySearch: single element found" {
+    try std.testing.expectEqual(@as(?usize, 0), binarySearch(i32, &.{42}, 42));
+}
+
+test "binarySearch: single element not found" {
+    try std.testing.expectEqual(@as(?usize, null), binarySearch(i32, &.{42}, 0));
+}
+
+test "binarySearch: empty slice" {
+    try std.testing.expectEqual(@as(?usize, null), binarySearch(i32, &.{}, 1));
+}
+
+test "binarySearch: with duplicates returns one of them" {
+    const result = binarySearch(i32, &.{ 1, 3, 3, 3, 5 }, 3).?;
+    try std.testing.expect(result >= 1 and result <= 3);
+}
+
+test "lowerBound: finds insertion point" {
+    try std.testing.expectEqual(@as(usize, 2), lowerBound(i32, &.{ 1, 3, 5, 7 }, 4));
+}
+
+test "lowerBound: target matches existing" {
+    try std.testing.expectEqual(@as(usize, 2), lowerBound(i32, &.{ 1, 3, 5, 7 }, 5));
+}
+
+test "lowerBound: before all elements" {
+    try std.testing.expectEqual(@as(usize, 0), lowerBound(i32, &.{ 1, 3, 5 }, 0));
+}
+
+test "lowerBound: after all elements" {
+    try std.testing.expectEqual(@as(usize, 4), lowerBound(i32, &.{ 1, 3, 5, 7 }, 9));
+}
+
+test "lowerBound: empty slice" {
+    try std.testing.expectEqual(@as(usize, 0), lowerBound(i32, &.{}, 1));
+}
+
+test "lowerBound: duplicates returns first" {
+    try std.testing.expectEqual(@as(usize, 1), lowerBound(i32, &.{ 1, 3, 3, 3, 5 }, 3));
+}
+
+test "upperBound: finds insertion point after" {
+    try std.testing.expectEqual(@as(usize, 2), upperBound(i32, &.{ 1, 3, 5, 7 }, 3));
+}
+
+test "upperBound: target between elements" {
+    try std.testing.expectEqual(@as(usize, 2), upperBound(i32, &.{ 1, 3, 5, 7 }, 4));
+}
+
+test "upperBound: before all elements" {
+    try std.testing.expectEqual(@as(usize, 0), upperBound(i32, &.{ 1, 3, 5 }, 0));
+}
+
+test "upperBound: after all elements" {
+    try std.testing.expectEqual(@as(usize, 4), upperBound(i32, &.{ 1, 3, 5, 7 }, 9));
+}
+
+test "upperBound: duplicates returns after last" {
+    try std.testing.expectEqual(@as(usize, 4), upperBound(i32, &.{ 1, 3, 3, 3, 5 }, 3));
+}
+
+test "upperBound: empty slice" {
+    try std.testing.expectEqual(@as(usize, 0), upperBound(i32, &.{}, 1));
+}
+
+test "sortedIndex: insertion point" {
+    try std.testing.expectEqual(@as(usize, 2), sortedIndex(i32, &.{ 1, 3, 5, 7 }, 4));
+}
+
+test "sortedIndex: at beginning" {
+    try std.testing.expectEqual(@as(usize, 0), sortedIndex(i32, &.{ 3, 5, 7 }, 1));
+}
+
+test "sortedIndex: at end" {
+    try std.testing.expectEqual(@as(usize, 3), sortedIndex(i32, &.{ 1, 3, 5 }, 7));
+}
+
+test "sortedLastIndex: after duplicates" {
+    try std.testing.expectEqual(@as(usize, 3), sortedLastIndex(i32, &.{ 1, 3, 3, 5 }, 3));
+}
+
+test "sortedLastIndex: no duplicates" {
+    try std.testing.expectEqual(@as(usize, 2), sortedLastIndex(i32, &.{ 1, 3, 5, 7 }, 4));
+}
+
+// Tests: Set operations with custom equality.
+
+const absEqual = struct {
+    fn f(a: i32, b: i32) bool {
+        return @abs(a) == @abs(b);
+    }
+}.f;
+
+test "differenceWith: basic" {
+    const result = try differenceWith(i32, std.testing.allocator, &.{ 1, 2, 3 }, &.{ 2, 4 }, absEqual);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 3 }, result);
+}
+
+test "differenceWith: with negative matching" {
+    const result = try differenceWith(i32, std.testing.allocator, &.{ 1, 2, 3 }, &.{ -2, 4 }, absEqual);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 3 }, result);
+}
+
+test "differenceWith: all removed" {
+    const result = try differenceWith(i32, std.testing.allocator, &.{ 1, 2 }, &.{ 1, 2 }, absEqual);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+test "differenceWith: empty a" {
+    const result = try differenceWith(i32, std.testing.allocator, &.{}, &.{ 1, 2 }, absEqual);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+test "intersectWith: basic" {
+    const result = try intersectWith(i32, std.testing.allocator, &.{ 1, 2, 3 }, &.{ 2, 4 }, absEqual);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{2}, result);
+}
+
+test "intersectWith: with negative matching" {
+    const result = try intersectWith(i32, std.testing.allocator, &.{ 1, -2, 3 }, &.{ 2, 4 }, absEqual);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{-2}, result);
+}
+
+test "intersectWith: no overlap" {
+    const result = try intersectWith(i32, std.testing.allocator, &.{ 1, 2 }, &.{ 3, 4 }, absEqual);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+test "unionWith: basic" {
+    const result = try unionWith(i32, std.testing.allocator, &.{ 1, 2 }, &.{ 2, 3 }, absEqual);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, result);
+}
+
+test "unionWith: negative deduplication" {
+    const result = try unionWith(i32, std.testing.allocator, &.{ 1, 2 }, &.{ -2, 3 }, absEqual);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, result);
+}
+
+test "unionWith: disjoint" {
+    const result = try unionWith(i32, std.testing.allocator, &.{ 1, 2 }, &.{ 3, 4 }, absEqual);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3, 4 }, result);
+}
+
+// Tests: compactMap.
+
+test "compactMap: filters and maps" {
+    const toEvenDoubled = struct {
+        fn f(x: i32) ?i32 {
+            if (@mod(x, 2) == 0) return x * 2;
+            return null;
+        }
+    }.f;
+    const result = try compactMap(i32, i32, std.testing.allocator, &.{ 1, 2, 3, 4, 5 }, toEvenDoubled);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 4, 8 }, result);
+}
+
+test "compactMap: all filtered out" {
+    const always_null = struct {
+        fn f(_: i32) ?i32 {
+            return null;
+        }
+    }.f;
+    const result = try compactMap(i32, i32, std.testing.allocator, &.{ 1, 2, 3 }, always_null);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+test "compactMap: all kept" {
+    const identity = struct {
+        fn f(x: i32) ?i32 {
+            return x;
+        }
+    }.f;
+    const result = try compactMap(i32, i32, std.testing.allocator, &.{ 1, 2, 3 }, identity);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3 }, result);
+}
+
+test "compactMap: empty input" {
+    const identity = struct {
+        fn f(x: i32) ?i32 {
+            return x;
+        }
+    }.f;
+    const result = try compactMap(i32, i32, std.testing.allocator, &.{}, identity);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 0), result.len);
+}
+
+test "compactMap: type change" {
+    const toStr = struct {
+        const strs = [_][]const u8{ "zero", "one", "two" };
+        fn f(x: i32) ?[]const u8 {
+            if (x >= 0 and x < strs.len) return strs[@intCast(x)];
+            return null;
+        }
+    }.f;
+    const result = try compactMap(i32, []const u8, std.testing.allocator, &.{ 0, 3, 1, 2 }, toStr);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 3), result.len);
+    try std.testing.expectEqualStrings("zero", result[0]);
+    try std.testing.expectEqualStrings("one", result[1]);
+    try std.testing.expectEqualStrings("two", result[2]);
+}
+
+// Tests: filterMapIter.
+
+test "filterMapIter: lazy filter+map" {
+    const toEvenDoubled = struct {
+        fn f(x: i32) ?i32 {
+            if (@mod(x, 2) == 0) return x * 2;
+            return null;
+        }
+    }.f;
+    var it = filterMapIter(i32, i32, &.{ 1, 2, 3, 4, 5 }, toEvenDoubled);
+    try std.testing.expectEqual(@as(?i32, 4), it.next());
+    try std.testing.expectEqual(@as(?i32, 8), it.next());
+    try std.testing.expectEqual(@as(?i32, null), it.next());
+}
+
+test "filterMapIter: collect" {
+    const toOptional = struct {
+        fn f(x: i32) ?i32 {
+            if (x > 2) return x;
+            return null;
+        }
+    }.f;
+    var it = filterMapIter(i32, i32, &.{ 1, 2, 3, 4 }, toOptional);
+    const result = try it.collect(std.testing.allocator);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualSlices(i32, &.{ 3, 4 }, result);
+}
+
+test "filterMapIter: empty input" {
+    const identity = struct {
+        fn f(x: i32) ?i32 {
+            return x;
+        }
+    }.f;
+    var it = filterMapIter(i32, i32, &.{}, identity);
+    try std.testing.expectEqual(@as(?i32, null), it.next());
 }
