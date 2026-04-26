@@ -87,7 +87,7 @@ pub fn keysAlloc(
     allocator: Allocator,
     hash_map: *const std.AutoHashMap(K, V),
 ) Allocator.Error![]K {
-    var list = std.ArrayList(K){};
+    var list = std.ArrayList(K).empty;
     errdefer list.deinit(allocator);
     var it = hash_map.iterator();
     while (it.next()) |entry| {
@@ -123,7 +123,7 @@ pub fn valuesAlloc(
     allocator: Allocator,
     hash_map: *const std.AutoHashMap(K, V),
 ) Allocator.Error![]V {
-    var list = std.ArrayList(V){};
+    var list = std.ArrayList(V).empty;
     errdefer list.deinit(allocator);
     var it = hash_map.iterator();
     while (it.next()) |entry| {
@@ -159,7 +159,7 @@ pub fn entriesAlloc(
     allocator: Allocator,
     hash_map: *const std.AutoHashMap(K, V),
 ) Allocator.Error![]Entry(K, V) {
-    var list = std.ArrayList(Entry(K, V)){};
+    var list = std.ArrayList(Entry(K, V)).empty;
     errdefer list.deinit(allocator);
     var it = hash_map.iterator();
     while (it.next()) |entry| {
@@ -441,7 +441,7 @@ pub fn mapToSlice(
     hash_map: *const std.AutoHashMap(K, V),
     transform: *const fn (K, V) R,
 ) Allocator.Error![]R {
-    var list = std.ArrayList(R){};
+    var list = std.ArrayList(R).empty;
     errdefer list.deinit(allocator);
     var it = hash_map.iterator();
     while (it.next()) |entry| {

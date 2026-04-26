@@ -562,7 +562,7 @@ pub fn MapIterator(comptime T: type, comptime R: type) type {
 
         /// Collect remaining elements into an allocated slice.
         pub fn collect(self: *Self, allocator: Allocator) Allocator.Error![]R {
-            var list = std.ArrayList(R){};
+            var list = std.ArrayList(R).empty;
             errdefer list.deinit(allocator);
             while (self.next()) |item| {
                 try list.append(allocator, item);
@@ -626,7 +626,7 @@ pub fn MapIndexIterator(comptime T: type, comptime R: type) type {
         }
 
         pub fn collect(self: *Self, allocator: Allocator) Allocator.Error![]R {
-            var list = std.ArrayList(R){};
+            var list = std.ArrayList(R).empty;
             errdefer list.deinit(allocator);
             while (self.next()) |item| {
                 try list.append(allocator, item);
@@ -671,7 +671,7 @@ pub fn FilterIterator(comptime T: type) type {
         }
 
         pub fn collect(self: *Self, allocator: Allocator) Allocator.Error![]T {
-            var list = std.ArrayList(T){};
+            var list = std.ArrayList(T).empty;
             errdefer list.deinit(allocator);
             while (self.next()) |item| {
                 try list.append(allocator, item);
@@ -745,7 +745,7 @@ pub fn RejectIterator(comptime T: type) type {
         }
 
         pub fn collect(self: *Self, allocator: Allocator) Allocator.Error![]T {
-            var list = std.ArrayList(T){};
+            var list = std.ArrayList(T).empty;
             errdefer list.deinit(allocator);
             while (self.next()) |item| {
                 try list.append(allocator, item);
@@ -824,7 +824,7 @@ pub fn FlattenIterator(comptime T: type) type {
         }
 
         pub fn collect(self: *Self, allocator: Allocator) Allocator.Error![]T {
-            var list = std.ArrayList(T){};
+            var list = std.ArrayList(T).empty;
             errdefer list.deinit(allocator);
             while (self.next()) |item| {
                 try list.append(allocator, item);
@@ -929,7 +929,7 @@ pub fn FlatMapIterator(comptime T: type, comptime R: type) type {
         }
 
         pub fn collect(self: *Self, allocator: Allocator) Allocator.Error![]R {
-            var list = std.ArrayList(R){};
+            var list = std.ArrayList(R).empty;
             errdefer list.deinit(allocator);
             while (self.next()) |item| {
                 try list.append(allocator, item);
@@ -1010,7 +1010,7 @@ pub fn CompactIterator(comptime T: type) type {
         }
 
         pub fn collect(self: *Self, allocator: Allocator) Allocator.Error![]T {
-            var list = std.ArrayList(T){};
+            var list = std.ArrayList(T).empty;
             errdefer list.deinit(allocator);
             while (self.next()) |item| {
                 try list.append(allocator, item);
@@ -1113,7 +1113,7 @@ pub fn WithoutIterator(comptime T: type) type {
         }
 
         pub fn collect(self: *Self, allocator: Allocator) Allocator.Error![]T {
-            var list = std.ArrayList(T){};
+            var list = std.ArrayList(T).empty;
             errdefer list.deinit(allocator);
             while (self.next()) |item| {
                 try list.append(allocator, item);
@@ -1154,7 +1154,7 @@ pub fn uniq(
 ) Allocator.Error![]T {
     var seen = std.AutoHashMap(T, void).init(allocator);
     defer seen.deinit();
-    var list = std.ArrayList(T){};
+    var list = std.ArrayList(T).empty;
     errdefer list.deinit(allocator);
     for (slice) |item| {
         const gop = try seen.getOrPut(item);
@@ -1180,7 +1180,7 @@ pub fn uniqBy(
 ) Allocator.Error![]T {
     var seen = std.AutoHashMap(K, void).init(allocator);
     defer seen.deinit();
-    var list = std.ArrayList(T){};
+    var list = std.ArrayList(T).empty;
     errdefer list.deinit(allocator);
     for (slice) |item| {
         const k = key_fn(item);
@@ -1220,7 +1220,7 @@ pub fn groupBy(
         const k = key_fn(item);
         const gop = try groups.getOrPut(k);
         if (!gop.found_existing) {
-            gop.value_ptr.* = std.ArrayList(T){};
+            gop.value_ptr.* = std.ArrayList(T).empty;
         }
         try gop.value_ptr.append(allocator, item);
     }
@@ -1254,9 +1254,9 @@ pub fn partition(
     slice: []const T,
     predicate: *const fn (T) bool,
 ) Allocator.Error!PartitionResult(T) {
-    var matching = std.ArrayList(T){};
+    var matching = std.ArrayList(T).empty;
     errdefer matching.deinit(allocator);
-    var rest = std.ArrayList(T){};
+    var rest = std.ArrayList(T).empty;
     errdefer rest.deinit(allocator);
     for (slice) |item| {
         if (predicate(item)) {
@@ -1319,7 +1319,7 @@ pub fn union_(
 ) Allocator.Error![]T {
     var seen = std.AutoHashMap(T, void).init(allocator);
     defer seen.deinit();
-    var list = std.ArrayList(T){};
+    var list = std.ArrayList(T).empty;
     errdefer list.deinit(allocator);
     for (a) |item| {
         const gop = try seen.getOrPut(item);
@@ -1386,7 +1386,7 @@ pub fn symmetricDifference(
     defer set_b.deinit();
     for (b) |item| try set_b.put(item, {});
 
-    var list = std.ArrayList(T){};
+    var list = std.ArrayList(T).empty;
     errdefer list.deinit(allocator);
     for (a) |item| {
         if (!set_b.contains(item)) try list.append(allocator, item);
@@ -1672,7 +1672,7 @@ pub fn TimesIterator(comptime R: type) type {
         ///
         /// Caller owns the returned slice and must free it with `allocator.free`.
         pub fn collect(self: *Self, allocator: Allocator) Allocator.Error![]R {
-            var list = std.ArrayList(R){};
+            var list = std.ArrayList(R).empty;
             errdefer list.deinit(allocator);
             while (self.next()) |val| {
                 try list.append(allocator, val);
@@ -1871,7 +1871,7 @@ pub fn findDuplicates(
 ) Allocator.Error![]T {
     var state = std.AutoHashMap(T, u8).init(allocator);
     defer state.deinit();
-    var list = std.ArrayList(T){};
+    var list = std.ArrayList(T).empty;
     errdefer list.deinit(allocator);
     for (items) |item| {
         const gop = try state.getOrPut(item);
@@ -1910,7 +1910,7 @@ pub fn findUniques(
             gop.value_ptr.* = 1;
         }
     }
-    var list = std.ArrayList(T){};
+    var list = std.ArrayList(T).empty;
     errdefer list.deinit(allocator);
     for (items) |item| {
         if (state.get(item)) |v| {
@@ -1953,7 +1953,7 @@ pub fn ScanIterator(comptime T: type, comptime R: type) type {
 
         /// Collect remaining elements into an allocated slice.
         pub fn collect(self: *Self, allocator: Allocator) Allocator.Error![]R {
-            var list = std.ArrayList(R){};
+            var list = std.ArrayList(R).empty;
             errdefer list.deinit(allocator);
             while (self.next()) |item| {
                 try list.append(allocator, item);
@@ -2094,7 +2094,7 @@ pub fn InterleaveIterator(comptime T: type) type {
 
         /// Collect remaining elements into an allocated slice.
         pub fn collect(self: *Self, allocator: Allocator) Allocator.Error![]T {
-            var list = std.ArrayList(T){};
+            var list = std.ArrayList(T).empty;
             errdefer list.deinit(allocator);
             while (self.next()) |item| {
                 try list.append(allocator, item);
@@ -2362,7 +2362,7 @@ pub fn differenceWith(
     b: []const T,
     predicate: *const fn (T, T) bool,
 ) Allocator.Error![]T {
-    var list = std.ArrayList(T){};
+    var list = std.ArrayList(T).empty;
     errdefer list.deinit(allocator);
     outer: for (a) |item| {
         for (b) |ex| {
@@ -2387,7 +2387,7 @@ pub fn intersectWith(
     b: []const T,
     predicate: *const fn (T, T) bool,
 ) Allocator.Error![]T {
-    var list = std.ArrayList(T){};
+    var list = std.ArrayList(T).empty;
     errdefer list.deinit(allocator);
     for (a) |item| {
         for (b) |candidate| {
@@ -2414,7 +2414,7 @@ pub fn unionWith(
     b: []const T,
     predicate: *const fn (T, T) bool,
 ) Allocator.Error![]T {
-    var list = std.ArrayList(T){};
+    var list = std.ArrayList(T).empty;
     errdefer list.deinit(allocator);
     for (a) |item| try list.append(allocator, item);
     for (b) |item| {
@@ -2446,7 +2446,7 @@ pub fn compactMap(
     slice: []const T,
     transform: *const fn (T) ?R,
 ) Allocator.Error![]R {
-    var list = std.ArrayList(R){};
+    var list = std.ArrayList(R).empty;
     errdefer list.deinit(allocator);
     for (slice) |item| {
         if (transform(item)) |val| {
@@ -2476,7 +2476,7 @@ pub fn FilterMapIterator(comptime T: type, comptime R: type) type {
         }
 
         pub fn collect(self: *Self, allocator: Allocator) Allocator.Error![]R {
-            var list = std.ArrayList(R){};
+            var list = std.ArrayList(R).empty;
             errdefer list.deinit(allocator);
             while (self.next()) |item| {
                 try list.append(allocator, item);

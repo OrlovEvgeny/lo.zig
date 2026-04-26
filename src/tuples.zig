@@ -35,7 +35,7 @@ pub fn ZipIterator(comptime A: type, comptime B: type) type {
             self: *Self,
             allocator: Allocator,
         ) Allocator.Error![]Pair(A, B) {
-            var list = std.ArrayList(Pair(A, B)){};
+            var list = std.ArrayList(Pair(A, B)).empty;
             errdefer list.deinit(allocator);
             while (self.next()) |item| {
                 try list.append(allocator, item);
@@ -145,7 +145,7 @@ pub fn ZipWithIterator(
             self: *Self,
             allocator: Allocator,
         ) Allocator.Error![]R {
-            var list = std.ArrayList(R){};
+            var list = std.ArrayList(R).empty;
             errdefer list.deinit(allocator);
             while (self.next()) |item| {
                 try list.append(allocator, item);
@@ -196,7 +196,7 @@ pub fn EnumerateIterator(comptime T: type) type {
             self: *Self,
             allocator: Allocator,
         ) Allocator.Error![]Pair(usize, T) {
-            var list = std.ArrayList(Pair(usize, T)){};
+            var list = std.ArrayList(Pair(usize, T)).empty;
             errdefer list.deinit(allocator);
             while (self.next()) |item| {
                 try list.append(allocator, item);

@@ -86,7 +86,7 @@ pub fn wordsAlloc(
     input: []const u8,
 ) Allocator.Error![][]const u8 {
     var it = words(input);
-    var list = std.ArrayList([]const u8){};
+    var list = std.ArrayList([]const u8).empty;
     errdefer list.deinit(allocator);
     while (it.next()) |word| {
         try list.append(allocator, word);
@@ -105,7 +105,7 @@ pub fn camelCase(
     input: []const u8,
 ) Allocator.Error![]u8 {
     var it = words(input);
-    var list = std.ArrayList(u8){};
+    var list = std.ArrayList(u8).empty;
     errdefer list.deinit(allocator);
     var first_word = true;
     while (it.next()) |word| {
@@ -134,7 +134,7 @@ pub fn pascalCase(
     input: []const u8,
 ) Allocator.Error![]u8 {
     var it = words(input);
-    var list = std.ArrayList(u8){};
+    var list = std.ArrayList(u8).empty;
     errdefer list.deinit(allocator);
     while (it.next()) |word| {
         for (word, 0..) |c, i| {
@@ -180,7 +180,7 @@ fn joinWords(
     sep: u8,
 ) Allocator.Error![]u8 {
     var it = words(input);
-    var list = std.ArrayList(u8){};
+    var list = std.ArrayList(u8).empty;
     errdefer list.deinit(allocator);
     var first_word = true;
     while (it.next()) |word| {
@@ -362,7 +362,7 @@ pub fn trim(input: []const u8) []const u8 {
 /// // s == "hello  "
 /// ```
 pub fn trimStart(input: []const u8) []const u8 {
-    return std.mem.trimLeft(u8, input, &std.ascii.whitespace);
+    return std.mem.trimStart(u8, input, &std.ascii.whitespace);
 }
 
 /// Trim whitespace from the end (right) of a string.
@@ -372,7 +372,7 @@ pub fn trimStart(input: []const u8) []const u8 {
 /// // s == "  hello"
 /// ```
 pub fn trimEnd(input: []const u8) []const u8 {
-    return std.mem.trimRight(u8, input, &std.ascii.whitespace);
+    return std.mem.trimEnd(u8, input, &std.ascii.whitespace);
 }
 
 /// Check if a string starts with a given prefix.
@@ -488,7 +488,7 @@ pub fn splitAlloc(
     delimiter: []const u8,
 ) Allocator.Error![][]const u8 {
     var it = std.mem.splitSequence(u8, input, delimiter);
-    var list = std.ArrayList([]const u8){};
+    var list = std.ArrayList([]const u8).empty;
     errdefer list.deinit(allocator);
     while (it.next()) |part| {
         try list.append(allocator, part);

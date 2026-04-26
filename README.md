@@ -1,6 +1,6 @@
 [![CI](https://github.com/OrlovEvgeny/lo.zig/actions/workflows/ci.yml/badge.svg)](https://github.com/OrlovEvgeny/lo.zig/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/OrlovEvgeny/lo.zig)](https://github.com/OrlovEvgeny/lo.zig/releases/latest)
-[![Zig](https://img.shields.io/badge/zig-0.15.0-F7A41D?logo=zig&logoColor=white)](https://ziglang.org)
+[![Zig](https://img.shields.io/badge/zig-0.15.x%20%7C%200.16.x-F7A41D?logo=zig&logoColor=white)](https://ziglang.org)
 
 # lo.zig is a Lodash-style Zig library
 
