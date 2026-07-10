@@ -16,6 +16,23 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         zig: ["0.15.0", "0.16.0"]
         optimize: [Debug, ReleaseSafe, ReleaseFast]
+        # Zig 0.15.x cannot link binaries on macOS 26 (the current
+        # macos-latest image): its bundled libSystem stubs predate the OS
+        # and every build fails with "undefined symbol" at link time.
+        # Zig 0.16+ supports macOS 26, so only 0.15.x moves to macos-15.
+        exclude:
+          - os: macos-latest
+            zig: "0.15.0"
+        include:
+          - os: macos-15
+            zig: "0.15.0"
+            optimize: Debug
+          - os: macos-15
+            zig: "0.15.0"
+            optimize: ReleaseSafe
+          - os: macos-15
+            zig: "0.15.0"
+            optimize: ReleaseFast
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
