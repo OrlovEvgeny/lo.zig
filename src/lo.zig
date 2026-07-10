@@ -27,6 +27,7 @@ pub const isEmpty = types.isEmpty;
 pub const toConst = types.toConst;
 pub const isNotEmpty = types.isNotEmpty;
 pub const ternary = types.ternary;
+pub const unwrapOrElse = types.unwrapOrElse;
 
 // Re-export math.zig
 pub const sum = math.sum;
@@ -177,6 +178,12 @@ pub const unionWith = slice.unionWith;
 pub const compactMap = slice.compactMap;
 pub const FilterMapIterator = slice.FilterMapIterator;
 pub const filterMapIter = slice.filterMapIter;
+pub const subslice = slice.subslice;
+pub const subset = slice.subset;
+pub const replaceElem = slice.replaceElem;
+pub const replaceAllElem = slice.replaceAllElem;
+pub const forEachWhile = slice.forEachWhile;
+pub const samplesUnique = slice.samplesUnique;
 
 // Re-export map.zig
 pub const Entry = hash_map.Entry;
@@ -221,6 +228,7 @@ pub const padLeft = strings.padLeft;
 pub const padRight = strings.padRight;
 pub const runeLength = strings.runeLength;
 pub const randomString = strings.randomString;
+pub const upperFirst = strings.upperFirst;
 pub const trim = strings.trim;
 pub const trimStart = strings.trimStart;
 pub const trimEnd = strings.trimEnd;
@@ -250,6 +258,12 @@ pub const ZipWithIterator = tuples.ZipWithIterator;
 pub const zipWith = tuples.zipWith;
 pub const EnumerateIterator = tuples.EnumerateIterator;
 pub const enumerate = tuples.enumerate;
+pub const Triple = tuples.Triple;
+pub const Zip3Iterator = tuples.Zip3Iterator;
+pub const zip3 = tuples.zip3;
+pub const zip3Alloc = tuples.zip3Alloc;
+pub const Unzip3Result = tuples.Unzip3Result;
+pub const unzip3 = tuples.unzip3;
 
 test {
     @import("std").testing.refAllDecls(@This());

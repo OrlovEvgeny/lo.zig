@@ -43,8 +43,8 @@ const safe  = lo.unwrapOr(i32, null, 42); // 42
 
 ## Function Index
 
-- [Slice Helpers](#slice-helpers) - first, last, nth, firstOr, lastOr, nthOr, initial, tail, drop, dropRight, dropWhile, dropWhileAlloc, dropRightWhile, take, takeRight, takeWhile, takeWhileAlloc, takeRightWhile, sample, samples
-- [Transform](#transform) - map, mapAlloc, mapIndex, filter, filterAlloc, reject, rejectAlloc, compact, compactAlloc, flatten, flattenAlloc, flattenDeep, flatMap, flatMapAlloc, without, forEach, forEachIndex, compactMap, filterMapIter
+- [Slice Helpers](#slice-helpers) - first, last, nth, firstOr, lastOr, nthOr, initial, tail, drop, dropRight, dropWhile, dropWhileAlloc, dropRightWhile, take, takeRight, takeWhile, takeWhileAlloc, takeRightWhile, sample, samples, samplesUnique, subslice, subset
+- [Transform](#transform) - map, mapAlloc, mapIndex, filter, filterAlloc, reject, rejectAlloc, compact, compactAlloc, flatten, flattenAlloc, flattenDeep, flatMap, flatMapAlloc, without, forEach, forEachIndex, forEachWhile, replaceElem, replaceAllElem, compactMap, filterMapIter
 - [Aggregate](#aggregate) - reduce, reduceRight, sum, sumBy, product, productBy, mean, meanBy, min, max, minBy, maxBy, minMax, minMaxBy, count, countBy, countValues, mode, median, variance, stddev, sampleVariance, sampleStddev, percentile
 - [Sort & Order](#sort--order) - sortBy, sortByAlloc, sortByField, sortByFieldAlloc, toSortedAlloc, isSorted, equal, reverse, shuffle
 - [Set Operations](#set-operations) - uniq, uniqBy, intersect, union\_, difference, symmetricDifference, findDuplicates, findUniques, elementsMatch, differenceWith, intersectWith, unionWith
@@ -52,11 +52,11 @@ const safe  = lo.unwrapOr(i32, null, 42); // 42
 - [Combine](#combine) - concat, splice, interleave, fill, fillRange, repeat, repeatBy, times, timesAlloc
 - [Search](#search) - find, findIndex, findLast, findLastIndex, indexOf, lastIndexOf, contains, containsBy, every, some, none, minIndex, maxIndex, binarySearch, lowerBound, upperBound, sortedIndex, sortedLastIndex
 - [Map Helpers](#map-helpers) - keys, keysAlloc, values, valuesAlloc, entries, entriesAlloc, fromEntries, mapKeys, mapValues, filterMap, filterKeys, filterValues, pickKeys, omitKeys, invert, merge, assign, mapEntries, mapToSlice, valueOr, hasKey, mapCount, keyBy, associate
-- [String Helpers](#string-helpers) - words, wordsAlloc, camelCase, pascalCase, snakeCase, kebabCase, capitalize, lowerFirst, toLower, toUpper, trim, trimStart, trimEnd, startsWith, endsWith, includes, substr, ellipsis, strRepeat, padLeft, padRight, runeLength, randomString, split, splitAlloc, join, replace, replaceAll, chunkString
+- [String Helpers](#string-helpers) - words, wordsAlloc, camelCase, pascalCase, snakeCase, kebabCase, capitalize, lowerFirst, upperFirst, toLower, toUpper, trim, trimStart, trimEnd, startsWith, endsWith, includes, substr, ellipsis, strRepeat, padLeft, padRight, runeLength, randomString, split, splitAlloc, join, replace, replaceAll, chunkString
 - [Math](#math) - sum, mean, median, variance, stddev, sampleVariance, sampleStddev, percentile, lerp, remap, clamp, inRange, cumSum, cumProd, rangeAlloc, rangeWithStepAlloc
-- [Tuple Helpers](#tuple-helpers) - zip, zipAlloc, zipWith, unzip, enumerate
-- [Type Helpers](#type-helpers) - isNull, isNotNull, unwrapOr, coalesce, empty, isEmpty, isNotEmpty, ternary, toConst
-- [Types](#types) - Entry, Pair, MinMax, RangeError, PartitionResult, UnzipResult, AssocEntry, and iterator types
+- [Tuple Helpers](#tuple-helpers) - zip, zipAlloc, zipWith, unzip, zip3, zip3Alloc, unzip3, enumerate
+- [Type Helpers](#type-helpers) - isNull, isNotNull, unwrapOr, unwrapOrElse, coalesce, empty, isEmpty, isNotEmpty, ternary, toConst
+- [Types](#types) - Entry, Pair, Triple, MinMax, RangeError, PartitionResult, UnzipResult, Unzip3Result, AssocEntry, and iterator types
 
 ---
 
@@ -232,6 +232,33 @@ const s = try lo.samples(i32, allocator, &.{ 1, 2, 3 }, 5, rng);
 defer allocator.free(s);
 ```
 
+### samplesUnique
+
+Up to n random elements sampled without replacement (each position picked at most once), matching samber/lo's `Samples`. Result length is `min(n, slice.len)`. Caller owns the returned slice.
+
+```zig
+const s = try lo.samplesUnique(i32, allocator, &.{ 1, 2, 3, 4 }, 2, rng);
+defer allocator.free(s);
+```
+
+### subslice
+
+Safe sub-slice view over `[start, end)`. Indices are clamped to the slice length; `start > end` yields an empty slice. Never panics.
+
+```zig
+lo.subslice(i32, &.{ 1, 2, 3, 4, 5 }, 1, 3); // &.{ 2, 3 }
+lo.subslice(i32, &.{ 1, 2, 3 }, 2, 100);     // &.{ 3 }
+```
+
+### subset
+
+View of up to `length` elements starting at `offset`. A negative offset counts from the end. Out-of-range values are clamped; never panics.
+
+```zig
+lo.subset(i32, &.{ 1, 2, 3, 4, 5 }, -2, 2); // &.{ 4, 5 }
+lo.subset(i32, &.{ 1, 2, 3, 4, 5 }, 1, 2);  // &.{ 2, 3 }
+```
+
 ---
 
 ## Transform
@@ -393,6 +420,34 @@ Invoke a function on each element with its index.
 
 ```zig
 lo.forEachIndex(i32, &.{ 10, 20 }, printWithIndex);
+```
+
+### forEachWhile
+
+Invoke a function on each element, stopping early when it returns false.
+
+```zig
+lo.forEachWhile(i32, &.{ 1, 2, 3, 4 }, keepGoing);
+```
+
+### replaceElem
+
+Copy of the slice with the first `n` occurrences of a value replaced. Caller owns the returned slice.
+
+```zig
+const r = try lo.replaceElem(i32, allocator, &.{ 0, 1, 0, 1 }, 0, 42, 1);
+defer allocator.free(r);
+// r == &.{ 42, 1, 0, 1 }
+```
+
+### replaceAllElem
+
+Copy of the slice with every occurrence of a value replaced. Caller owns the returned slice.
+
+```zig
+const r = try lo.replaceAllElem(i32, allocator, &.{ 0, 1, 0 }, 0, 42);
+defer allocator.free(r);
+// r == &.{ 42, 1, 42 }
 ```
 
 ### compactMap
@@ -1452,10 +1507,10 @@ defer allocator.free(s);
 
 ### capitalize
 
-Capitalize the first letter of a string. Caller owns the returned string.
+Capitalize: first letter upper case, the rest lower case (matches samber/lo). Caller owns the returned string.
 
 ```zig
-const s = try lo.capitalize(allocator, "hello");
+const s = try lo.capitalize(allocator, "heLLO");
 defer allocator.free(s);
 // s == "Hello"
 ```
@@ -1468,6 +1523,16 @@ Lowercase just the first character (ASCII). Caller owns the returned string.
 const s = try lo.lowerFirst(allocator, "Hello");
 defer allocator.free(s);
 // s == "hello"
+```
+
+### upperFirst
+
+Uppercase just the first character (ASCII), leaving the rest untouched. Caller owns the returned string.
+
+```zig
+const s = try lo.upperFirst(allocator, "hello World");
+defer allocator.free(s);
+// s == "Hello World"
 ```
 
 ### toLower
@@ -1548,7 +1613,7 @@ lo.substr("hello", 2, 5); // "llo"
 
 ### ellipsis
 
-Truncate a string and add "..." if it exceeds max\_len. Caller owns the returned string.
+Truncate a string and add "..." if it exceeds max\_len. Truncation backs off to a UTF-8 codepoint boundary, so multi-byte characters are never cut in half. Caller owns the returned string.
 
 ```zig
 const s = try lo.ellipsis(allocator, "hello world", 8);
@@ -1606,7 +1671,7 @@ defer allocator.free(s);
 
 ### split
 
-Split a string by a delimiter sequence. Returns a lazy iterator. Preserves empty tokens.
+Split a string by a delimiter sequence. Returns a lazy iterator. Preserves empty tokens. Asserts that the delimiter is non-empty.
 
 ```zig
 var it = lo.split("one,two,,four", ",");
@@ -1618,7 +1683,7 @@ it.next(); // "four"
 
 ### splitAlloc
 
-Split a string by a delimiter, collected into an allocated slice. Caller owns the returned outer slice.
+Split a string by a delimiter, collected into an allocated slice. Caller owns the returned outer slice. Asserts that the delimiter is non-empty.
 
 ```zig
 const parts = try lo.splitAlloc(allocator, "a-b-c", "-");
@@ -1853,6 +1918,33 @@ const r = try lo.unzip(i32, u8, allocator, &pairs);
 defer r.deinit(allocator);
 ```
 
+### zip3
+
+Group elements from three slices. Returns a lazy iterator that stops at the shortest slice's length.
+
+```zig
+var it = lo.zip3(i32, u8, bool, &.{ 1, 2 }, &.{ 'a', 'b' }, &.{ true, false });
+it.next(); // .{ .a = 1, .b = 'a', .c = true }
+```
+
+### zip3Alloc
+
+Group elements from three slices into an allocated slice of `Triple`. Caller owns the returned slice.
+
+```zig
+const triples = try lo.zip3Alloc(i32, u8, bool, allocator, as, bs, cs);
+defer allocator.free(triples);
+```
+
+### unzip3
+
+Split a slice of triples into three separate slices. Call `deinit(allocator)` to free.
+
+```zig
+const r = try lo.unzip3(i32, u8, bool, allocator, &triples);
+defer r.deinit(allocator);
+```
+
 ### enumerate
 
 Pair each element with its index. Returns a lazy iterator.
@@ -1892,6 +1984,15 @@ Unwrap an optional, returning the fallback if null.
 ```zig
 const x: ?i32 = null;
 lo.unwrapOr(i32, x, 99); // 99
+```
+
+### unwrapOrElse
+
+Unwrap an optional, computing the fallback lazily only when the value is null. Use instead of `unwrapOr` when the fallback is expensive.
+
+```zig
+const x: ?i32 = null;
+lo.unwrapOrElse(i32, x, makeDefault); // makeDefault() called only here
 ```
 
 ### coalesce
@@ -1970,6 +2071,14 @@ Generic pair type used by zip operations.
 const p = lo.Pair(i32, u8){ .a = 42, .b = 'z' };
 ```
 
+### Triple
+
+Generic 3-tuple type used by zip3 operations.
+
+```zig
+const t = lo.Triple(i32, u8, bool){ .a = 1, .b = 'x', .c = true };
+```
+
 ### MinMax
 
 Result type returned by `minMax()`, holding `.min_val` and `.max_val`.
@@ -1985,6 +2094,10 @@ Result type from `partition()` holding `.matching` and `.rest` slices. Call `dei
 ### UnzipResult
 
 Result type from `unzip()` holding `.a` and `.b` slices. Call `deinit(allocator)` to free.
+
+### Unzip3Result
+
+Result type from `unzip3()` holding `.a`, `.b`, and `.c` slices. Call `deinit(allocator)` to free.
 
 ### AssocEntry
 
@@ -2019,6 +2132,7 @@ The following iterator types are returned by their corresponding functions. They
 | `EntryIterator` | `entries()` |
 | `ZipIterator` | `zip()` |
 | `ZipWithIterator` | `zipWith()` |
+| `Zip3Iterator` | `zip3()` |
 | `EnumerateIterator` | `enumerate()` |
 | `WordIterator` | `words()` |
 | `StringChunkIterator` | `chunkString()` |

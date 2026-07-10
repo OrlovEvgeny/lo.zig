@@ -1,13 +1,62 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const lo = @import("lo");
 
 const WARMUP: usize = 100;
 const ITERATIONS: usize = 10_000;
 
-pub fn main() !void {
-    const stdout = std.fs.File.stdout().deprecatedWriter();
-    const allocator = std.heap.page_allocator;
+// Zig 0.16 moved files and clocks to the std.Io interface; 0.15 still has
+// std.fs.File.stdout() and std.time.Timer. Gate on the version so the
+// benchmark builds on both.
+const use_io = builtin.zig_version.major > 0 or builtin.zig_version.minor >= 16;
 
+const BenchTimer = struct {
+    inner: Inner,
+
+    const Inner = if (use_io)
+        struct { io: std.Io, start_ts: std.Io.Clock.Timestamp }
+    else
+        std.time.Timer;
+
+    fn start(io_ctx: anytype) !BenchTimer {
+        if (use_io) {
+            return .{ .inner = .{
+                .io = io_ctx,
+                .start_ts = std.Io.Clock.Timestamp.now(io_ctx, .awake),
+            } };
+        } else {
+            return .{ .inner = try std.time.Timer.start() };
+        }
+    }
+
+    fn read(self: *BenchTimer) u64 {
+        if (use_io) {
+            const now_ts = std.Io.Clock.Timestamp.now(self.inner.io, .awake);
+            const ns = self.inner.start_ts.durationTo(now_ts).raw.nanoseconds;
+            return @intCast(@max(0, ns));
+        } else {
+            return self.inner.read();
+        }
+    }
+};
+
+pub fn main() !void {
+    const allocator = std.heap.page_allocator;
+    if (use_io) {
+        var threaded: std.Io.Threaded = .init(allocator, .{});
+        defer threaded.deinit();
+        const io = threaded.io();
+        var out_buf: [4096]u8 = undefined;
+        var file_writer = std.Io.File.stdout().writer(io, &out_buf);
+        try run(allocator, &file_writer.interface, io);
+        try file_writer.interface.flush();
+    } else {
+        const stdout = std.fs.File.stdout().deprecatedWriter();
+        try run(allocator, stdout, {});
+    }
+}
+
+fn run(allocator: std.mem.Allocator, stdout: anytype, io_ctx: anytype) !void {
     // Generate input data: 1,000 u32 elements
     var input_data: [1000]u32 = undefined;
     for (&input_data, 0..) |*v, i| {
@@ -41,7 +90,7 @@ pub fn main() !void {
             lo.sortBy(u32, u32, &items_copy, &identityU32);
             std.mem.doNotOptimizeAway(&items_copy);
         }
-        var timer = try std.time.Timer.start();
+        var timer = try BenchTimer.start(io_ctx);
         for (0..ITERATIONS) |_| {
             items_copy = original;
             lo.sortBy(u32, u32, &items_copy, &identityU32);
@@ -55,7 +104,7 @@ pub fn main() !void {
             std.sort.block(u32, &items_copy, {}, std.sort.asc(u32));
             std.mem.doNotOptimizeAway(&items_copy);
         }
-        timer = try std.time.Timer.start();
+        timer = try BenchTimer.start(io_ctx);
         for (0..ITERATIONS) |_| {
             items_copy = original;
             std.sort.block(u32, &items_copy, {}, std.sort.asc(u32));
@@ -76,7 +125,7 @@ pub fn main() !void {
             std.mem.doNotOptimizeAway(result.ptr);
             allocator.free(result);
         }
-        var timer = try std.time.Timer.start();
+        var timer = try BenchTimer.start(io_ctx);
         for (0..ITERATIONS) |_| {
             const result = try lo.filterAlloc(u32, allocator, items, &isEvenU32);
             std.mem.doNotOptimizeAway(result.ptr);
@@ -90,7 +139,7 @@ pub fn main() !void {
             std.mem.doNotOptimizeAway(result.ptr);
             allocator.free(result);
         }
-        timer = try std.time.Timer.start();
+        timer = try BenchTimer.start(io_ctx);
         for (0..ITERATIONS) |_| {
             const result = try filterManual(u32, allocator, items, &isEvenU32);
             std.mem.doNotOptimizeAway(result.ptr);
@@ -111,7 +160,7 @@ pub fn main() !void {
             std.mem.doNotOptimizeAway(result.ptr);
             allocator.free(result);
         }
-        var timer = try std.time.Timer.start();
+        var timer = try BenchTimer.start(io_ctx);
         for (0..ITERATIONS) |_| {
             const result = try lo.mapAlloc(u32, u64, allocator, items, &doubleU32);
             std.mem.doNotOptimizeAway(result.ptr);
@@ -125,7 +174,7 @@ pub fn main() !void {
             std.mem.doNotOptimizeAway(result.ptr);
             allocator.free(result);
         }
-        timer = try std.time.Timer.start();
+        timer = try BenchTimer.start(io_ctx);
         for (0..ITERATIONS) |_| {
             const result = try mapManual(u32, u64, allocator, items, &doubleU32);
             std.mem.doNotOptimizeAway(result.ptr);
@@ -150,7 +199,7 @@ pub fn main() !void {
             std.mem.doNotOptimizeAway(result.ptr);
             allocator.free(result);
         }
-        var timer = try std.time.Timer.start();
+        var timer = try BenchTimer.start(io_ctx);
         for (0..ITERATIONS) |_| {
             const result = try lo.concat(u32, allocator, slices);
             std.mem.doNotOptimizeAway(result.ptr);
@@ -164,7 +213,7 @@ pub fn main() !void {
             std.mem.doNotOptimizeAway(result.ptr);
             allocator.free(result);
         }
-        timer = try std.time.Timer.start();
+        timer = try BenchTimer.start(io_ctx);
         for (0..ITERATIONS) |_| {
             const result = try std.mem.concat(allocator, u32, slices);
             std.mem.doNotOptimizeAway(result.ptr);
@@ -185,7 +234,7 @@ pub fn main() !void {
             std.mem.doNotOptimizeAway(result.ptr);
             allocator.free(result);
         }
-        var timer = try std.time.Timer.start();
+        var timer = try BenchTimer.start(io_ctx);
         for (0..ITERATIONS) |_| {
             const result = try lo.join(allocator, ", ", strings);
             std.mem.doNotOptimizeAway(result.ptr);
@@ -199,7 +248,7 @@ pub fn main() !void {
             std.mem.doNotOptimizeAway(result.ptr);
             allocator.free(result);
         }
-        timer = try std.time.Timer.start();
+        timer = try BenchTimer.start(io_ctx);
         for (0..ITERATIONS) |_| {
             const result = try std.mem.join(allocator, ", ", strings);
             std.mem.doNotOptimizeAway(result.ptr);

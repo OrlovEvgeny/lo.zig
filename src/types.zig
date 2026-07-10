@@ -63,7 +63,7 @@ pub fn empty(comptime T: type) T {
         .optional => null,
         .null => null,
         .@"enum" => @enumFromInt(@typeInfo(T).@"enum".fields[0].value),
-        .@"struct" => std.mem.zeroes(T),
+        .@"struct" => std.mem.zeroInit(T, .{}),
         .array => std.mem.zeroes(T),
         .vector => std.mem.zeroes(T),
         .pointer => |p| switch (p.size) {
@@ -87,6 +87,12 @@ pub fn empty(comptime T: type) T {
 /// lo.isEmpty(i32, 42);  // false
 /// ```
 pub fn isEmpty(comptime T: type, value: T) bool {
+    // std.meta.eql compares slices by ptr+len identity, so a slice would
+    // never equal the fresh empty literal — check length instead.
+    const info = @typeInfo(T);
+    if (info == .pointer and info.pointer.size == .slice) {
+        return value.len == 0;
+    }
     return std.meta.eql(value, empty(T));
 }
 
@@ -323,4 +329,58 @@ test "ternary: works at comptime" {
         const result = ternary(i32, true, 1, 2);
         if (result != 1) @compileError("ternary comptime failed");
     }
+}
+
+// Regression tests for bug fixes.
+
+test "isEmpty: slices are compared by length, not identity" {
+    try std.testing.expect(isEmpty([]const u8, ""));
+    var buf = [_]u8{ 1, 2, 3 };
+    try std.testing.expect(isEmpty([]const u8, buf[0..0]));
+    try std.testing.expect(!isEmpty([]const u8, "x"));
+    try std.testing.expect(isNotEmpty([]const u8, "x"));
+}
+
+test "empty: struct uses declared field defaults" {
+    const S = struct { a: i32 = 5, b: bool = true, c: u8 };
+    const e = empty(S);
+    try std.testing.expectEqual(@as(i32, 5), e.a);
+    try std.testing.expectEqual(true, e.b);
+    try std.testing.expectEqual(@as(u8, 0), e.c);
+    try std.testing.expect(isEmpty(S, S{ .c = 0 }));
+}
+
+/// Unwrap an optional, computing the fallback lazily only when the value
+/// is null. Use instead of `unwrapOr` when the fallback is expensive.
+///
+/// ```zig
+/// const x: ?i32 = null;
+/// lo.unwrapOrElse(i32, x, makeDefault); // makeDefault() called
+/// ```
+pub fn unwrapOrElse(comptime T: type, value: ?T, fallback: *const fn () T) T {
+    return value orelse fallback();
+}
+
+test "unwrapOrElse: returns value when non-null" {
+    const helpers = struct {
+        var called: bool = false;
+        fn fallback() i32 {
+            called = true;
+            return 99;
+        }
+    };
+    helpers.called = false;
+    const x: ?i32 = 42;
+    try std.testing.expectEqual(@as(i32, 42), unwrapOrElse(i32, x, helpers.fallback));
+    try std.testing.expect(!helpers.called);
+}
+
+test "unwrapOrElse: calls fallback only when null" {
+    const helpers = struct {
+        fn fallback() i32 {
+            return 99;
+        }
+    };
+    const x: ?i32 = null;
+    try std.testing.expectEqual(@as(i32, 99), unwrapOrElse(i32, x, helpers.fallback));
 }

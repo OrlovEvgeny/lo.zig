@@ -31,8 +31,12 @@ pub const WordIterator = struct {
                     self.index += 1;
                 }
             } else {
+                // Digits and non-ASCII bytes stay glued to the word, matching
+                // the lowercase branch below ("int8" and "Int8" split alike).
                 while (self.index < self.input.len and
-                    isLower(self.input[self.index]))
+                    (isLower(self.input[self.index]) or
+                        std.ascii.isDigit(self.input[self.index]) or
+                        self.input[self.index] >= 0x80))
                 {
                     self.index += 1;
                 }
@@ -51,7 +55,7 @@ pub const WordIterator = struct {
 };
 
 fn isSeparator(c: u8) bool {
-    return c == '_' or c == '-' or c == ' ' or c == '\t' or c == '\n';
+    return c == '_' or c == '-' or std.ascii.isWhitespace(c);
 }
 
 fn isUpper(c: u8) bool {
@@ -193,10 +197,11 @@ fn joinWords(
     return list.toOwnedSlice(allocator);
 }
 
-/// Capitalize the first letter of a string.
+/// Capitalize: first letter upper case, the rest lower case
+/// (matches samber/lo's `Capitalize`).
 ///
 /// ```zig
-/// const s = try lo.capitalize(alloc, "hello");
+/// const s = try lo.capitalize(alloc, "heLLO");
 /// // s == "Hello"
 /// ```
 pub fn capitalize(
@@ -207,8 +212,10 @@ pub fn capitalize(
         return allocator.alloc(u8, 0);
     }
     const result = try allocator.alloc(u8, input.len);
-    @memcpy(result, input);
     result[0] = std.ascii.toUpper(input[0]);
+    for (input[1..], 1..) |c, i| {
+        result[i] = std.ascii.toLower(c);
+    }
     return result;
 }
 
@@ -233,8 +240,13 @@ pub fn ellipsis(
         for (result) |*c| c.* = '.';
         return result;
     }
-    const text_len = max_len - 3;
-    const result = try allocator.alloc(u8, max_len);
+    // Back off to a UTF-8 codepoint boundary so a multi-byte character is
+    // never cut in half; the result may be shorter than max_len.
+    var text_len = max_len - 3;
+    while (text_len > 0 and (input[text_len] & 0xC0) == 0x80) {
+        text_len -= 1;
+    }
+    const result = try allocator.alloc(u8, text_len + 3);
     @memcpy(result[0..text_len], input[0..text_len]);
     result[text_len] = '.';
     result[text_len + 1] = '.';
@@ -256,7 +268,8 @@ pub fn strRepeat(
     if (n == 0 or input.len == 0) {
         return allocator.alloc(u8, 0);
     }
-    const result = try allocator.alloc(u8, input.len * n);
+    const total = std.math.mul(usize, input.len, n) catch return error.OutOfMemory;
+    const result = try allocator.alloc(u8, total);
     for (0..n) |i| {
         @memcpy(result[i * input.len .. (i + 1) * input.len], input);
     }
@@ -461,6 +474,7 @@ pub fn substr(input: []const u8, start: usize, end: usize) []const u8 {
 /// Split a string by a delimiter sequence, returning a lazy iterator.
 /// Preserves empty tokens (e.g., "a,,b" yields "a", "", "b").
 /// Returned slices borrow from the input string -- they are NOT copies.
+/// Asserts that `delimiter` is non-empty.
 ///
 /// ```zig
 /// var it = lo.split("one,two,,four", ",");
@@ -470,12 +484,14 @@ pub fn substr(input: []const u8, start: usize, end: usize) []const u8 {
 /// it.next(); // "four"
 /// ```
 pub fn split(input: []const u8, delimiter: []const u8) std.mem.SplitIterator(u8, .sequence) {
+    std.debug.assert(delimiter.len != 0);
     return std.mem.splitSequence(u8, input, delimiter);
 }
 
 /// Split a string by a delimiter, collected into an allocated slice.
 /// Caller owns the returned outer slice (free with `allocator.free(result)`).
 /// Inner slices borrow from `input` -- do not use after `input` is freed.
+/// Asserts that `delimiter` is non-empty.
 ///
 /// ```zig
 /// const parts = try lo.splitAlloc(alloc, "a-b-c", "-");
@@ -487,6 +503,7 @@ pub fn splitAlloc(
     input: []const u8,
     delimiter: []const u8,
 ) Allocator.Error![][]const u8 {
+    std.debug.assert(delimiter.len != 0);
     var it = std.mem.splitSequence(u8, input, delimiter);
     var list = std.ArrayList([]const u8).empty;
     errdefer list.deinit(allocator);
@@ -1218,4 +1235,84 @@ test "chunkString: size of one" {
     try std.testing.expectEqualStrings("b", it.next().?);
     try std.testing.expectEqualStrings("c", it.next().?);
     try std.testing.expectEqual(@as(?[]const u8, null), it.next());
+}
+
+// Regression tests for bug fixes.
+
+test "strRepeat: size overflow returns OutOfMemory instead of panicking" {
+    const huge = std.math.maxInt(usize) / 2 + 2;
+    try std.testing.expectError(
+        error.OutOfMemory,
+        strRepeat(std.testing.allocator, "ab", huge),
+    );
+}
+
+test "ellipsis: never cuts a UTF-8 codepoint in half" {
+    const s = try ellipsis(std.testing.allocator, "日本語日本語", 8);
+    defer std.testing.allocator.free(s);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(s));
+    try std.testing.expectEqualStrings("日...", s);
+}
+
+test "words: digits split consistently regardless of case" {
+    var it1 = words("int8Value");
+    try std.testing.expectEqualStrings("int8", it1.next().?);
+    try std.testing.expectEqualStrings("Value", it1.next().?);
+    var it2 = words("Int8Value");
+    try std.testing.expectEqualStrings("Int8", it2.next().?);
+    try std.testing.expectEqualStrings("Value", it2.next().?);
+}
+
+test "words: non-ASCII bytes do not split a word" {
+    const s = try snakeCase(std.testing.allocator, "Héllo");
+    defer std.testing.allocator.free(s);
+    try std.testing.expectEqualStrings("héllo", s);
+}
+
+test "words: carriage return is a separator" {
+    const s = try snakeCase(std.testing.allocator, "hello\r\nworld");
+    defer std.testing.allocator.free(s);
+    try std.testing.expectEqualStrings("hello_world", s);
+}
+
+test "capitalize: lowercases the remainder" {
+    const s = try capitalize(std.testing.allocator, "heLLO");
+    defer std.testing.allocator.free(s);
+    try std.testing.expectEqualStrings("Hello", s);
+}
+
+/// Uppercase just the first character of a string (ASCII), leaving the
+/// rest untouched. Counterpart of `lowerFirst`. Caller owns the memory.
+///
+/// ```zig
+/// const s = try lo.upperFirst(alloc, "hello World");
+/// defer alloc.free(s);
+/// // s == "Hello World"
+/// ```
+pub fn upperFirst(allocator: Allocator, input: []const u8) Allocator.Error![]u8 {
+    if (input.len == 0) {
+        return allocator.alloc(u8, 0);
+    }
+    const result = try allocator.alloc(u8, input.len);
+    @memcpy(result, input);
+    result[0] = std.ascii.toUpper(input[0]);
+    return result;
+}
+
+test "upperFirst: uppercases only the first character" {
+    const s = try upperFirst(std.testing.allocator, "hello World");
+    defer std.testing.allocator.free(s);
+    try std.testing.expectEqualStrings("Hello World", s);
+}
+
+test "upperFirst: empty string" {
+    const s = try upperFirst(std.testing.allocator, "");
+    defer std.testing.allocator.free(s);
+    try std.testing.expectEqual(@as(usize, 0), s.len);
+}
+
+test "upperFirst: already uppercase" {
+    const s = try upperFirst(std.testing.allocator, "Hi");
+    defer std.testing.allocator.free(s);
+    try std.testing.expectEqualStrings("Hi", s);
 }

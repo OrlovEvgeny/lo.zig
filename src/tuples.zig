@@ -435,3 +435,189 @@ test "zipWith: single pair" {
     try std.testing.expectEqual(@as(?i32, 35), it.next());
     try std.testing.expectEqual(@as(?i32, null), it.next());
 }
+
+// Three-way zip utilities.
+
+/// A generic 3-tuple type used by zip3 operations.
+///
+/// ```zig
+/// const t = lo.Triple(i32, u8, bool){ .a = 1, .b = 'x', .c = true };
+/// ```
+pub fn Triple(comptime A: type, comptime B: type, comptime C: type) type {
+    return struct { a: A, b: B, c: C };
+}
+
+/// Lazy iterator that groups elements from three slices.
+/// Returned by `zip3()`. See `zip3()` for usage examples.
+pub fn Zip3Iterator(
+    comptime A: type,
+    comptime B: type,
+    comptime C: type,
+) type {
+    return struct {
+        as: []const A,
+        bs: []const B,
+        cs: []const C,
+        index: usize = 0,
+
+        const Self = @This();
+
+        pub fn next(self: *Self) ?Triple(A, B, C) {
+            if (self.index >= self.as.len or
+                self.index >= self.bs.len or
+                self.index >= self.cs.len) return null;
+            const result = Triple(A, B, C){
+                .a = self.as[self.index],
+                .b = self.bs[self.index],
+                .c = self.cs[self.index],
+            };
+            self.index += 1;
+            return result;
+        }
+
+        pub fn collect(
+            self: *Self,
+            allocator: Allocator,
+        ) Allocator.Error![]Triple(A, B, C) {
+            var list = std.ArrayList(Triple(A, B, C)).empty;
+            errdefer list.deinit(allocator);
+            while (self.next()) |item| {
+                try list.append(allocator, item);
+            }
+            return list.toOwnedSlice(allocator);
+        }
+    };
+}
+
+/// Group elements from three slices. Returns a lazy iterator.
+/// Stops at the shortest slice's length.
+///
+/// ```zig
+/// var it = lo.zip3(i32, u8, bool, &.{1, 2}, &.{'a', 'b'}, &.{true, false});
+/// it.next(); // .{ .a = 1, .b = 'a', .c = true }
+/// ```
+pub fn zip3(
+    comptime A: type,
+    comptime B: type,
+    comptime C: type,
+    as: []const A,
+    bs: []const B,
+    cs: []const C,
+) Zip3Iterator(A, B, C) {
+    return .{ .as = as, .bs = bs, .cs = cs };
+}
+
+/// Group elements from three slices into an allocated slice.
+/// Caller owns the returned slice.
+///
+/// ```zig
+/// const triples = try lo.zip3Alloc(i32, u8, bool, allocator, as, bs, cs);
+/// defer allocator.free(triples);
+/// ```
+pub fn zip3Alloc(
+    comptime A: type,
+    comptime B: type,
+    comptime C: type,
+    allocator: Allocator,
+    as: []const A,
+    bs: []const B,
+    cs: []const C,
+) Allocator.Error![]Triple(A, B, C) {
+    var it = zip3(A, B, C, as, bs, cs);
+    return it.collect(allocator);
+}
+
+/// Result type holding three allocated slices.
+/// Returned by `unzip3()`. Call `deinit(allocator)` to free all three.
+pub fn Unzip3Result(comptime A: type, comptime B: type, comptime C: type) type {
+    return struct {
+        a: []A,
+        b: []B,
+        c: []C,
+
+        pub fn deinit(self: @This(), allocator: Allocator) void {
+            allocator.free(self.a);
+            allocator.free(self.b);
+            allocator.free(self.c);
+        }
+    };
+}
+
+/// Split a slice of triples into three separate slices.
+///
+/// ```zig
+/// const r = try lo.unzip3(i32, u8, bool, allocator, &triples);
+/// defer r.deinit(allocator);
+/// ```
+pub fn unzip3(
+    comptime A: type,
+    comptime B: type,
+    comptime C: type,
+    allocator: Allocator,
+    triples: []const Triple(A, B, C),
+) Allocator.Error!Unzip3Result(A, B, C) {
+    const as = try allocator.alloc(A, triples.len);
+    errdefer allocator.free(as);
+    const bs = try allocator.alloc(B, triples.len);
+    errdefer allocator.free(bs);
+    const cs = try allocator.alloc(C, triples.len);
+    for (triples, 0..) |t, i| {
+        as[i] = t.a;
+        bs[i] = t.b;
+        cs[i] = t.c;
+    }
+    return .{ .a = as, .b = bs, .c = cs };
+}
+
+test "zip3: groups elements from three slices" {
+    var it = zip3(i32, u8, bool, &.{ 1, 2 }, &.{ 'a', 'b' }, &.{ true, false });
+    const t1 = it.next().?;
+    try std.testing.expectEqual(@as(i32, 1), t1.a);
+    try std.testing.expectEqual(@as(u8, 'a'), t1.b);
+    try std.testing.expectEqual(true, t1.c);
+    const t2 = it.next().?;
+    try std.testing.expectEqual(@as(i32, 2), t2.a);
+    try std.testing.expectEqual(@as(u8, 'b'), t2.b);
+    try std.testing.expectEqual(false, t2.c);
+    try std.testing.expectEqual(@as(?Triple(i32, u8, bool), null), it.next());
+}
+
+test "zip3: stops at shortest slice" {
+    var it = zip3(i32, i32, i32, &.{ 1, 2, 3 }, &.{ 4, 5 }, &.{6});
+    _ = it.next().?;
+    try std.testing.expectEqual(@as(?Triple(i32, i32, i32), null), it.next());
+}
+
+test "zip3Alloc: collects into owned slice" {
+    const result = try zip3Alloc(
+        i32,
+        u8,
+        bool,
+        std.testing.allocator,
+        &.{ 1, 2 },
+        &.{ 'x', 'y' },
+        &.{ true, true },
+    );
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 2), result.len);
+    try std.testing.expectEqual(@as(u8, 'y'), result[1].b);
+}
+
+test "unzip3: splits triples into three slices" {
+    const triples = [_]Triple(i32, u8, bool){
+        .{ .a = 1, .b = 'a', .c = true },
+        .{ .a = 2, .b = 'b', .c = false },
+    };
+    const r = try unzip3(i32, u8, bool, std.testing.allocator, &triples);
+    defer r.deinit(std.testing.allocator);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2 }, r.a);
+    try std.testing.expectEqualSlices(u8, "ab", r.b);
+    try std.testing.expectEqualSlices(bool, &.{ true, false }, r.c);
+}
+
+test "unzip3: empty input" {
+    const triples = [_]Triple(i32, u8, bool){};
+    const r = try unzip3(i32, u8, bool, std.testing.allocator, &triples);
+    defer r.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 0), r.a.len);
+}

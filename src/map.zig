@@ -195,6 +195,8 @@ pub fn fromEntries(
 
 /// Transform map keys using a function.
 /// Caller owns the returned map.
+/// If `transform` maps two keys to the same result, the last one written
+/// wins; iteration order is unspecified, so which entry survives is too.
 ///
 /// ```zig
 /// var result = try lo.mapKeys(u32, u8, u64, allocator, &m, timesTwo);
@@ -402,6 +404,9 @@ pub fn mapCount(
 
 /// Transform both keys and values of a map using a function.
 /// Caller owns the returned map.
+/// If `transform` produces the same key for two entries, the last one
+/// written wins; iteration order is unspecified, so which entry survives
+/// is too.
 ///
 /// ```zig
 /// var result = try lo.mapEntries(u32, u8, u64, u16, allocator, &m, xform);

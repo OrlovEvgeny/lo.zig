@@ -2,6 +2,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 /// Sum all elements in a slice. Returns 0 for empty slices.
+/// The accumulator has type `T`: integer overflow is safety-checked illegal
+/// behavior (panics in Debug/ReleaseSafe). Use `sumBy` with a wider result
+/// type when the total may not fit in `T`.
 ///
 /// ```zig
 /// lo.sum(i32, &.{ 1, 2, 3, 4 }); // 10
@@ -34,6 +37,9 @@ pub fn sumBy(
 }
 
 /// Multiply all elements in a slice. Returns 1 for empty slices.
+/// The accumulator has type `T`: integer overflow is safety-checked illegal
+/// behavior (panics in Debug/ReleaseSafe). Use `productBy` with a wider
+/// result type when the product may not fit in `T`.
 ///
 /// ```zig
 /// lo.product(i32, &.{ 2, 3, 4 }); // 24
@@ -246,14 +252,24 @@ pub fn rangeAlloc(
     if (start >= end) {
         return allocator.alloc(T, 0);
     }
-    const len: usize = @intCast(end - start);
+    const len: usize = @intCast(distance(T, start, end));
     const result = try allocator.alloc(T, len);
     var v = start;
     for (result) |*slot| {
         slot.* = v;
-        v += 1;
+        v +%= 1;
     }
     return result;
+}
+
+// Exact |end - start| for integers: wrapping-sub then bitcast to the
+// unsigned counterpart, so wide signed spans (e.g. i8: -100..100) don't
+// overflow T.
+fn distance(comptime T: type, start: T, end: T) std.meta.Int(.unsigned, @bitSizeOf(T)) {
+    return if (end >= start)
+        @bitCast(end -% start)
+    else
+        @bitCast(start -% end);
 }
 
 /// Allocate a slice containing values from start to end (exclusive)
@@ -279,29 +295,21 @@ pub fn rangeWithStepAlloc(
     if (step == 0) return error.InvalidArgument;
     if (step > 0) {
         if (start >= end) return allocator.alloc(T, 0);
-        const span: usize = @intCast(end - start);
-        const s: usize = @intCast(step);
-        const len = (span + s - 1) / s;
-        const result = try allocator.alloc(T, len);
-        var v = start;
-        for (result) |*slot| {
-            slot.* = v;
-            v += step;
-        }
-        return result;
     } else {
         if (start <= end) return allocator.alloc(T, 0);
-        const span: usize = @intCast(start - end);
-        const s: usize = @intCast(-step);
-        const len = (span + s - 1) / s;
-        const result = try allocator.alloc(T, len);
-        var v = start;
-        for (result) |*slot| {
-            slot.* = v;
-            v += step;
-        }
-        return result;
     }
+    const span: usize = @intCast(distance(T, start, end));
+    const s: usize = @intCast(@abs(step));
+    const len = (span - 1) / s + 1;
+    const result = try allocator.alloc(T, len);
+    var v = start;
+    for (result, 0..) |*slot, i| {
+        slot.* = v;
+        // Skip the increment after the last element: it can overflow T
+        // even though every emitted value fits.
+        if (i + 1 < result.len) v += step;
+    }
+    return result;
 }
 
 /// Error set for `rangeWithStepAlloc`. Includes `InvalidArgument` for zero step.
@@ -311,6 +319,7 @@ pub const RangeError = Allocator.Error || error{InvalidArgument};
 /// When multiple values share the highest frequency, returns the smallest value.
 /// Requires allocation for an internal frequency map.
 /// Returns null for empty slices.
+/// Integer element types only: floats are not hashable by the internal map.
 ///
 /// ```zig
 /// const m = try lo.mode(i32, allocator, &.{ 1, 2, 2, 3, 2 });
@@ -499,6 +508,7 @@ pub fn lerp(comptime T: type, a: T, b: T, t: T) T {
 
 /// Remap a value from one range to another.
 /// Maps `value` in [in_min, in_max] to the corresponding position in [out_min, out_max].
+/// Returns `out_min` when the input range is empty (in_min == in_max).
 /// Float-only.
 ///
 /// ```zig
@@ -509,12 +519,15 @@ pub fn remap(comptime T: type, value: T, in_min: T, in_max: T, out_min: T, out_m
         .float, .comptime_float => {},
         else => @compileError("remap: unsupported type " ++ @typeName(T) ++ ", float required"),
     }
+    if (in_max == in_min) return out_min;
     return out_min + (value - in_min) / (in_max - in_min) * (out_max - out_min);
 }
 
 /// Cumulative sum of a numeric slice.
 /// Returns an allocated slice where each element is the running total.
 /// Caller owns and must free the returned slice.
+/// The running total has type `T`: integer overflow is safety-checked
+/// illegal behavior (panics in Debug/ReleaseSafe).
 ///
 /// ```zig
 /// const result = try lo.cumSum(i32, allocator, &.{ 1, 2, 3, 4 });
@@ -535,6 +548,8 @@ pub fn cumSum(comptime T: type, allocator: Allocator, slice: []const T) Allocato
 /// Cumulative product of a numeric slice.
 /// Returns an allocated slice where each element is the running product.
 /// Caller owns and must free the returned slice.
+/// The running product has type `T`: integer overflow is safety-checked
+/// illegal behavior (panics in Debug/ReleaseSafe).
 ///
 /// ```zig
 /// const result = try lo.cumProd(i32, allocator, &.{ 1, 2, 3, 4 });
@@ -555,7 +570,11 @@ pub fn cumProd(comptime T: type, allocator: Allocator, slice: []const T) Allocat
 // Comparison and conversion helpers.
 
 fn compare(comptime T: type, a: T, b: T) std.math.Order {
-    return std.math.order(a, b);
+    // Not std.math.order: it hits unreachable on NaN operands.
+    // With this ordering NaN compares .eq, so it never displaces a value.
+    if (a < b) return .lt;
+    if (a > b) return .gt;
+    return .eq;
 }
 
 fn toF64(comptime T: type, value: T) f64 {
@@ -1357,4 +1376,53 @@ test "cumProd: with zero produces zeros after the zero" {
     const result = try cumProd(i32, std.testing.allocator, &.{ 1, 2, 0, 4 });
     defer std.testing.allocator.free(result);
     try std.testing.expectEqualSlices(i32, &.{ 1, 2, 0, 0 }, result);
+}
+
+// Regression tests for bug fixes.
+
+test "rangeAlloc: wide signed span does not overflow" {
+    const r = try rangeAlloc(i8, std.testing.allocator, -100, 100);
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqual(@as(usize, 200), r.len);
+    try std.testing.expectEqual(@as(i8, -100), r[0]);
+    try std.testing.expectEqual(@as(i8, 99), r[r.len - 1]);
+}
+
+test "rangeWithStepAlloc: trailing increment does not overflow" {
+    const r = try rangeWithStepAlloc(i8, std.testing.allocator, 100, 127, 20);
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqualSlices(i8, &.{ 100, 120 }, r);
+}
+
+test "rangeWithStepAlloc: works with unsigned types" {
+    const r = try rangeWithStepAlloc(u8, std.testing.allocator, 0, 255, 100);
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 100, 200 }, r);
+}
+
+test "rangeWithStepAlloc: step of minInt does not overflow on negation" {
+    const r = try rangeWithStepAlloc(i8, std.testing.allocator, 10, 0, -128);
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqualSlices(i8, &.{10}, r);
+}
+
+test "rangeWithStepAlloc: wide signed span with negative step" {
+    const r = try rangeWithStepAlloc(i8, std.testing.allocator, 100, -100, -50);
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqualSlices(i8, &.{ 100, 50, 0, -50 }, r);
+}
+
+test "min/max/minMax/clamp: NaN operands never crash" {
+    const nan = std.math.nan(f64);
+    try std.testing.expectEqual(@as(?f64, 1.0), min(f64, &.{ 1.0, nan, 2.0 }));
+    try std.testing.expectEqual(@as(?f64, 2.0), max(f64, &.{ 1.0, nan, 2.0 }));
+    const mm = minMax(f64, &.{ 1.0, nan, 2.0 }).?;
+    try std.testing.expectEqual(@as(f64, 1.0), mm.min_val);
+    try std.testing.expectEqual(@as(f64, 2.0), mm.max_val);
+    try std.testing.expectEqual(@as(f64, 5.0), clamp(f64, 5.0, 0.0, 10.0));
+}
+
+test "remap: zero-width input range returns out_min" {
+    try std.testing.expectEqual(@as(f64, 0.0), remap(f64, 5.0, 3.0, 3.0, 0.0, 100.0));
+    try std.testing.expectEqual(@as(f64, 0.0), remap(f64, 3.0, 3.0, 3.0, 0.0, 100.0));
 }

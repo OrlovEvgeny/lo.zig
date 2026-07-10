@@ -4,3 +4,4 @@ zig-out/
 *.o
 .planning/
 .idea
+.DS_Store

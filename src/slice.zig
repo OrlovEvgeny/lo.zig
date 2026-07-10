@@ -1265,10 +1265,10 @@ pub fn partition(
             try rest.append(allocator, item);
         }
     }
-    return .{
-        .matching = try matching.toOwnedSlice(allocator),
-        .rest = try rest.toOwnedSlice(allocator),
-    };
+    const m = try matching.toOwnedSlice(allocator);
+    errdefer allocator.free(m);
+    const r = try rest.toOwnedSlice(allocator);
+    return .{ .matching = m, .rest = r };
 }
 
 // Set operations.
@@ -1464,7 +1464,7 @@ pub fn fillRange(
     end: usize,
 ) void {
     const s = @min(start, slice.len);
-    const e = @min(end, slice.len);
+    const e = @max(s, @min(end, slice.len));
     for (slice[s..e]) |*slot| {
         slot.* = value;
     }
@@ -2207,7 +2207,9 @@ pub fn minIndex(comptime T: type, slice_: []const T) ?usize {
     if (slice_.len == 0) return null;
     var best: usize = 0;
     for (slice_[1..], 1..) |item, i| {
-        if (std.math.order(item, slice_[best]) == .lt) best = i;
+        // Direct comparison instead of std.math.order: NaN never wins,
+        // while order() hits unreachable on NaN operands.
+        if (item < slice_[best]) best = i;
     }
     return best;
 }
@@ -2223,7 +2225,7 @@ pub fn maxIndex(comptime T: type, slice_: []const T) ?usize {
     if (slice_.len == 0) return null;
     var best: usize = 0;
     for (slice_[1..], 1..) |item, i| {
-        if (std.math.order(item, slice_[best]) == .gt) best = i;
+        if (item > slice_[best]) best = i;
     }
     return best;
 }
@@ -2231,6 +2233,16 @@ pub fn maxIndex(comptime T: type, slice_: []const T) ?usize {
 // Equality helper, used throughout slice.zig.
 
 fn eql(comptime T: type, a: T, b: T) bool {
+    // std.meta.eql compares slices by ptr+len identity; compare contents
+    // instead so `contains([]const u8, ...)` matches runtime-built strings.
+    const info = @typeInfo(T);
+    if (info == .pointer and info.pointer.size == .slice) {
+        if (a.len != b.len) return false;
+        for (a, b) |x, y| {
+            if (!eql(info.pointer.child, x, y)) return false;
+        }
+        return true;
+    }
     return std.meta.eql(a, b);
 }
 
@@ -5366,4 +5378,296 @@ test "filterMapIter: empty input" {
     }.f;
     var it = filterMapIter(i32, i32, &.{}, identity);
     try std.testing.expectEqual(@as(?i32, null), it.next());
+}
+
+// Regression tests for bug fixes.
+
+test "contains: matches string content, not pointer identity" {
+    const needle = try std.testing.allocator.dupe(u8, "hello");
+    defer std.testing.allocator.free(needle);
+    const haystack = [_][]const u8{ "hello", "world" };
+    try std.testing.expect(contains([]const u8, &haystack, needle));
+    try std.testing.expectEqual(@as(?usize, 0), indexOf([]const u8, &haystack, needle));
+}
+
+test "equal: compares string slices by content" {
+    const copy = try std.testing.allocator.dupe(u8, "abc");
+    defer std.testing.allocator.free(copy);
+    const a = [_][]const u8{"abc"};
+    const b = [_][]const u8{copy};
+    try std.testing.expect(equal([]const u8, &a, &b));
+}
+
+test "without: filters string values by content" {
+    const copy = try std.testing.allocator.dupe(u8, "b");
+    defer std.testing.allocator.free(copy);
+    var it = without([]const u8, &.{ "a", "b", "c" }, &.{copy});
+    try std.testing.expectEqualStrings("a", it.next().?);
+    try std.testing.expectEqualStrings("c", it.next().?);
+    try std.testing.expectEqual(@as(?[]const u8, null), it.next());
+}
+
+test "fillRange: start greater than end is a no-op" {
+    var data = [_]i32{ 1, 2, 3, 4, 5 };
+    fillRange(i32, &data, 0, 4, 2);
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3, 4, 5 }, &data);
+}
+
+test "minIndex/maxIndex: NaN elements never win and never crash" {
+    const nan = std.math.nan(f64);
+    try std.testing.expectEqual(@as(?usize, 0), minIndex(f64, &.{ 1.0, nan, 3.0 }));
+    try std.testing.expectEqual(@as(?usize, 2), maxIndex(f64, &.{ 1.0, nan, 3.0 }));
+}
+
+test "partition: no leak when allocation fails" {
+    const helpers = struct {
+        fn isEvenPred(x: i32) bool {
+            return @mod(x, 2) == 0;
+        }
+        fn run(allocator: Allocator) !void {
+            const p = try partition(i32, allocator, &.{ 1, 2, 3, 4, 5, 6 }, isEvenPred);
+            p.deinit(allocator);
+        }
+    };
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        helpers.run,
+        .{},
+    );
+}
+
+// Additional utilities (ports of samber/lo helpers).
+
+/// Safe sub-slice view over [start, end).
+/// Indices are clamped to the slice length; start > end yields an empty
+/// slice. Never panics. Port of samber/lo's `Slice`.
+///
+/// ```zig
+/// lo.subslice(i32, &.{ 1, 2, 3, 4, 5 }, 1, 3); // &.{ 2, 3 }
+/// lo.subslice(i32, &.{ 1, 2, 3 }, 2, 100);     // &.{ 3 }
+/// ```
+pub fn subslice(
+    comptime T: type,
+    slice_: []const T,
+    start: usize,
+    end: usize,
+) []const T {
+    const s = @min(start, slice_.len);
+    const e = @max(s, @min(end, slice_.len));
+    return slice_[s..e];
+}
+
+/// View of up to `length` elements starting at `offset`.
+/// A negative offset counts from the end. Out-of-range values are
+/// clamped. Never panics. Port of samber/lo's `Subset`.
+///
+/// ```zig
+/// lo.subset(i32, &.{ 1, 2, 3, 4, 5 }, -2, 2); // &.{ 4, 5 }
+/// lo.subset(i32, &.{ 1, 2, 3, 4, 5 }, 1, 2);  // &.{ 2, 3 }
+/// ```
+pub fn subset(
+    comptime T: type,
+    slice_: []const T,
+    offset: isize,
+    length: usize,
+) []const T {
+    const start = if (offset < 0) blk: {
+        const back = @abs(offset);
+        break :blk if (back >= slice_.len) 0 else slice_.len - @as(usize, @intCast(back));
+    } else @min(@as(usize, @intCast(offset)), slice_.len);
+    const take_n = @min(length, slice_.len - start);
+    return slice_[start .. start + take_n];
+}
+
+/// Returns a copy of the slice with the first `n` occurrences of `old`
+/// replaced by `new`. Caller owns the returned slice.
+/// Port of samber/lo's `Replace`.
+///
+/// ```zig
+/// const r = try lo.replaceElem(i32, allocator, &.{ 0, 1, 0, 1 }, 0, 42, 1);
+/// defer allocator.free(r);
+/// // r == &.{ 42, 1, 0, 1 }
+/// ```
+pub fn replaceElem(
+    comptime T: type,
+    allocator: Allocator,
+    slice_: []const T,
+    old: T,
+    new: T,
+    n: usize,
+) Allocator.Error![]T {
+    const result = try allocator.dupe(T, slice_);
+    var remaining = n;
+    for (result) |*item| {
+        if (remaining == 0) break;
+        if (eql(T, item.*, old)) {
+            item.* = new;
+            remaining -= 1;
+        }
+    }
+    return result;
+}
+
+/// Returns a copy of the slice with all occurrences of `old` replaced by
+/// `new`. Caller owns the returned slice. Port of samber/lo's `ReplaceAll`.
+///
+/// ```zig
+/// const r = try lo.replaceAllElem(i32, allocator, &.{ 0, 1, 0 }, 0, 42);
+/// defer allocator.free(r);
+/// // r == &.{ 42, 1, 42 }
+/// ```
+pub fn replaceAllElem(
+    comptime T: type,
+    allocator: Allocator,
+    slice_: []const T,
+    old: T,
+    new: T,
+) Allocator.Error![]T {
+    return replaceElem(T, allocator, slice_, old, new, std.math.maxInt(usize));
+}
+
+/// Call the callback for each element, stopping early when it returns
+/// false. Port of samber/lo's `ForEachWhile`.
+///
+/// ```zig
+/// lo.forEachWhile(i32, &.{ 1, 2, 3 }, keepGoing);
+/// ```
+pub fn forEachWhile(
+    comptime T: type,
+    slice_: []const T,
+    callback: *const fn (T) bool,
+) void {
+    for (slice_) |item| {
+        if (!callback(item)) break;
+    }
+}
+
+/// Up to n random elements sampled WITHOUT replacement (each position is
+/// picked at most once), matching samber/lo's `Samples`. Result length is
+/// min(n, slice.len). Caller owns the returned slice.
+/// See `samples` for sampling with replacement.
+///
+/// ```zig
+/// const s = try lo.samplesUnique(i32, allocator, &.{1,2,3,4}, 2, rng);
+/// defer allocator.free(s);
+/// ```
+pub fn samplesUnique(
+    comptime T: type,
+    allocator: Allocator,
+    slice_: []const T,
+    n: usize,
+    random: std.Random,
+) Allocator.Error![]T {
+    const k = @min(n, slice_.len);
+    if (k == 0) return allocator.alloc(T, 0);
+    const copy = try allocator.dupe(T, slice_);
+    errdefer allocator.free(copy);
+    // Partial Fisher-Yates: after i steps the first i slots hold a
+    // uniform sample without replacement.
+    for (0..k) |i| {
+        const j = random.intRangeLessThan(usize, i, copy.len);
+        std.mem.swap(T, &copy[i], &copy[j]);
+    }
+    if (k == copy.len) return copy;
+    if (allocator.resize(copy, k)) {
+        return copy[0..k];
+    }
+    const out = try allocator.dupe(T, copy[0..k]);
+    allocator.free(copy);
+    return out;
+}
+
+test "subslice: clamps and never panics" {
+    try std.testing.expectEqualSlices(i32, &.{ 2, 3 }, subslice(i32, &.{ 1, 2, 3, 4, 5 }, 1, 3));
+    try std.testing.expectEqualSlices(i32, &.{3}, subslice(i32, &.{ 1, 2, 3 }, 2, 100));
+    try std.testing.expectEqualSlices(i32, &.{}, subslice(i32, &.{ 1, 2, 3 }, 4, 2));
+    try std.testing.expectEqualSlices(i32, &.{}, subslice(i32, &.{}, 0, 10));
+}
+
+test "subset: positive and negative offsets" {
+    try std.testing.expectEqualSlices(i32, &.{ 2, 3 }, subset(i32, &.{ 1, 2, 3, 4, 5 }, 1, 2));
+    try std.testing.expectEqualSlices(i32, &.{ 4, 5 }, subset(i32, &.{ 1, 2, 3, 4, 5 }, -2, 2));
+    try std.testing.expectEqualSlices(i32, &.{ 1, 2 }, subset(i32, &.{ 1, 2, 3 }, -100, 2));
+    try std.testing.expectEqualSlices(i32, &.{}, subset(i32, &.{ 1, 2, 3 }, 100, 2));
+    try std.testing.expectEqualSlices(i32, &.{ 3, 4, 5 }, subset(i32, &.{ 1, 2, 3, 4, 5 }, 2, 100));
+}
+
+test "replaceElem: replaces first n occurrences" {
+    const r = try replaceElem(i32, std.testing.allocator, &.{ 0, 1, 0, 1, 0 }, 0, 42, 2);
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqualSlices(i32, &.{ 42, 1, 42, 1, 0 }, r);
+}
+
+test "replaceElem: n zero leaves copy unchanged" {
+    const r = try replaceElem(i32, std.testing.allocator, &.{ 0, 1 }, 0, 42, 0);
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqualSlices(i32, &.{ 0, 1 }, r);
+}
+
+test "replaceAllElem: replaces every occurrence" {
+    const r = try replaceAllElem(i32, std.testing.allocator, &.{ 0, 1, 0 }, 0, 42);
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqualSlices(i32, &.{ 42, 1, 42 }, r);
+}
+
+test "replaceAllElem: compares strings by content" {
+    const needle = try std.testing.allocator.dupe(u8, "b");
+    defer std.testing.allocator.free(needle);
+    const r = try replaceAllElem([]const u8, std.testing.allocator, &.{ "a", "b" }, needle, "x");
+    defer std.testing.allocator.free(r);
+    try std.testing.expectEqualStrings("a", r[0]);
+    try std.testing.expectEqualStrings("x", r[1]);
+}
+
+test "forEachWhile: stops when callback returns false" {
+    const counter = struct {
+        var seen: usize = 0;
+        fn cb(x: i32) bool {
+            seen += 1;
+            return x < 3;
+        }
+    };
+    counter.seen = 0;
+    forEachWhile(i32, &.{ 1, 2, 3, 4, 5 }, counter.cb);
+    try std.testing.expectEqual(@as(usize, 3), counter.seen);
+}
+
+test "samplesUnique: returns min(n, len) distinct positions" {
+    var prng = std.Random.DefaultPrng.init(42);
+    const s = try samplesUnique(i32, std.testing.allocator, &.{ 1, 2, 3, 4, 5 }, 3, prng.random());
+    defer std.testing.allocator.free(s);
+    try std.testing.expectEqual(@as(usize, 3), s.len);
+    // All sampled values are distinct because source values are distinct.
+    for (s, 0..) |a, i| {
+        for (s[i + 1 ..]) |b| try std.testing.expect(a != b);
+    }
+}
+
+test "samplesUnique: n larger than slice returns a permutation" {
+    var prng = std.Random.DefaultPrng.init(7);
+    const s = try samplesUnique(i32, std.testing.allocator, &.{ 1, 2, 3 }, 100, prng.random());
+    defer std.testing.allocator.free(s);
+    try std.testing.expectEqual(@as(usize, 3), s.len);
+    const total = sumOf(s);
+    try std.testing.expectEqual(@as(i32, 6), total);
+}
+
+fn sumOf(s: []const i32) i32 {
+    var acc: i32 = 0;
+    for (s) |v| acc += v;
+    return acc;
+}
+
+test "samplesUnique: empty slice" {
+    var prng = std.Random.DefaultPrng.init(1);
+    const s = try samplesUnique(i32, std.testing.allocator, &.{}, 5, prng.random());
+    defer std.testing.allocator.free(s);
+    try std.testing.expectEqual(@as(usize, 0), s.len);
+}
+
+test "samplesUnique: n of zero returns empty owned slice" {
+    var prng = std.Random.DefaultPrng.init(3);
+    const s = try samplesUnique(i32, std.testing.allocator, &.{ 1, 2, 3 }, 0, prng.random());
+    defer std.testing.allocator.free(s);
+    try std.testing.expectEqual(@as(usize, 0), s.len);
 }
